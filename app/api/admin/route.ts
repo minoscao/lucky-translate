@@ -12,7 +12,7 @@ async function dashboard(request?: Request, businessUnlocked?: boolean) {
   const history = await getDb().prepare(`SELECT e.id, e.feature, e.model, e.input_tokens, e.cached_tokens, e.output_tokens, e.total_tokens, e.cost_micros, e.price_snapshot, e.created_at, u.username
     FROM usage_events e JOIN users u ON u.id = e.user_id ORDER BY e.created_at DESC LIMIT 200`).all();
   const payments = await getDb().prepare(`SELECT p.id, p.user_id, p.amount_cents, p.currency, p.status, p.note, p.paid_at, p.created_at, u.username
-    FROM payments p JOIN users u ON u.id = p.user_id ORDER BY p.paid_at DESC LIMIT 500`).all();
+    FROM payments p JOIN users u ON u.id = p.user_id ORDER BY p.paid_at DESC`).all();
   const multiplier = await getDb().prepare("SELECT value FROM app_config WHERE key = 'cost_multiplier'").first<{ value: string }>();
   return {
     users, prices: prices.results, history: history.results, payments: payments.results,
