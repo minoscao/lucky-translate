@@ -20,7 +20,6 @@ function RecordButton({ controller: t, side, onBeforeRecord }: { controller: Ret
   const stopTouch = () => { pointerHeld.current = false; setPressed(false); void t.stop(); };
   const state = t.phase === 'permission' ? 'permission' : t.mode;
   const primary = INTERFACE_COPY[t.pair[side]][state];
-  const secondary = INTERFACE_COPY[t.pair[1 - side]][state];
   return <div className="record-area">
         <Button className="record-button" data-mode={t.mode} data-pressed={pressed} aria-pressed={isRecording} aria-label={primary} disabled={t.phase === 'stopping'}
           onContextMenu={event => event.preventDefault()}
@@ -34,7 +33,7 @@ function RecordButton({ controller: t, side, onBeforeRecord }: { controller: Ret
           onKeyUp={event => { if (event.key === ' ') { event.preventDefault(); keyHeld.current = false; stopTouch(); } }}
           onBlur={() => { if (keyHeld.current) { keyHeld.current = false; stopTouch(); } }}>
           {t.phase === 'permission' ? <LoaderCircle className="spinning" /> : t.mode === 'continuous' ? <Square fill="currentColor" /> : <Mic />}
-          <span className="button-copy"><span lang={t.pair[side]} dir="auto">{primary}</span><small lang={t.pair[1 - side]} dir="auto">{secondary}</small></span>
+          <span className="button-copy"><span lang={t.pair[side]} dir="auto">{primary}</span></span>
           {t.mode === 'continuous' && <LockKeyhole className="lock-icon" />}
         </Button>
         <div className="meter" aria-hidden="true">{Array.from({ length: 25 }, (_, index) => <i key={index} style={{ height: `${3 + t.level * (4 + Math.abs(Math.sin(index * 1.8)) * 14)}px` }} />)}</div>
@@ -233,7 +232,7 @@ export default function Home() {
     await t.stop(); await installEvent.prompt(); const result = await installEvent.userChoice;
     if (result.outcome === 'accepted') setInstallEvent(undefined);
   };
-  const status = t.error || (t.phase === 'permission' ? '请允许使用麦克风…' : t.phase === 'listening' ? (t.pending ? '正在聆听 · 译文即将出现' : '正在聆听，双方都可以说话') : t.phase === 'stopping' ? '正在结束录音…' : t.pending ? `正在翻译${t.pending > 1 ? ` · ${t.pending} 句` : ''}` : t.notice || '理解上下文 · 双向翻译');
+  const status = t.error || (t.phase === 'permission' ? '请允许使用麦克风…' : t.phase === 'listening' ? (t.pending ? '正在聆听 · 译文即将出现' : '正在聆听，双方都可以说话') : t.phase === 'stopping' ? '正在结束录音…' : t.pending ? `正在翻译${t.pending > 1 ? ` · ${t.pending} 句` : ''}` : t.notice);
   if (access !== 'unlocked') return <main className="access-page"><section className="access-card" aria-busy={access === 'checking'}>
     <div className="access-mark"><ShieldCheck /></div><h1>Lucky 同声翻译</h1>
     {access === 'checking' ? <p><LoaderCircle className="spinning" />正在检查访问权限…</p> : <form onSubmit={unlock}>
@@ -250,7 +249,7 @@ export default function Home() {
         <Button variant="ghost" onClick={() => open('history')} aria-label="对话记录" title="对话记录"><History /></Button>
         <Button variant="ghost" onClick={() => open('settings')} aria-label="翻译设置" title="设置"><Settings2 /></Button>
       </div></div>
-      <output className={`status-line ${t.error ? 'has-error' : ''}`} aria-live="polite">{t.pending > 0 && !t.error && <LoaderCircle className="spinning" />}<span>{status}</span></output>
+      {status && <output className={`status-line ${t.error ? 'has-error' : ''}`} aria-live="polite">{t.pending > 0 && !t.error && <LoaderCircle className="spinning" />}<span>{status}</span></output>}
       {t.failed && <Button variant="outline" className="retry-button" disabled={locked} onClick={t.retry}>重试上一句</Button>}
     </section>
     <footer className="app-footer"><span className="connection-label"><i data-ready={Boolean(t.credential)} />{t.credential ? '服务已设置' : '尚未连接翻译服务'}</span><div>
