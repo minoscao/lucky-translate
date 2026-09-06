@@ -4,14 +4,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   coachDailySummaryDirect, coachPracticeDirect, coachReplyDirect, coachWeeklySummaryDirect,
-  CoachDailySummary, CoachExercise, CoachMemory, CoachMessage, CoachWeeklySummary, EMPTY_COACH_MEMORY,
+  CoachDailySummary, CoachExercise, CoachLevelAssessment, CoachMemory, CoachMessage, CoachWeeklySummary, EMPTY_COACH_MEMORY, coachLevelAssessmentDirect,
 } from '@/lib/coach';
 import { transcribeDirect } from '@/lib/direct-api';
 import { VoiceRecorder } from '@/lib/voice-recorder';
 import { saveCloudRecord } from '@/lib/account';
 
 type UsageHandler = (tokens: number, cost: number) => void;
-type CoachJournal = { todayDate: string; todaySeconds: number; daily: CoachDailySummary[]; weekly: CoachWeeklySummary[] };
+type CoachJournal = { todayDate: string; todaySeconds: number; daily: CoachDailySummary[]; weekly: CoachWeeklySummary[]; assessment?: CoachLevelAssessment };
 const JOURNAL_KEY = 'lucky-coach-journal';
 const dateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const weekStart = (value: string) => {
@@ -20,6 +20,10 @@ const weekStart = (value: string) => {
 };
 const weekEnd = (start: string) => { const date = new Date(`${start}T12:00:00`); date.setDate(date.getDate() + 6); return dateKey(date); };
 const emptyJournal = (): CoachJournal => ({ todayDate: dateKey(), todaySeconds: 0, daily: [], weekly: [] });
+const totalPracticeSeconds = (journal: CoachJournal) => {
+  const today = dateKey(), todaySummary = journal.daily.find(item => item.date === today)?.minutes || 0;
+  return Math.max(journal.todaySeconds, todaySummary * 60) + journal.daily.filter(item => item.date !== today).reduce((sum, item) => sum + item.minutes * 60, 0) + journal.weekly.reduce((sum, item) => sum + item.minutes * 60, 0);
+};
 const cleanMemory = (memory: CoachMemory): CoachMemory => ({
   level: String(memory.level || 'discovering').slice(0, 80), topics: (memory.topics || []).map(String).slice(-12),
   strengths: (memory.strengths || []).map(String).slice(-12), focus: (memory.focus || []).map(String).slice(-12), phrases: (memory.phrases || []).map(String).slice(-20),
@@ -31,26 +35,38 @@ const readJournal = (): CoachJournal => {
       todayDate: today, todaySeconds: raw?.todayDate === today && Number.isFinite(raw?.todaySeconds) ? Math.max(0, raw.todaySeconds) : 0,
       daily: Array.isArray(raw?.daily) ? raw.daily.sort((a: CoachDailySummary, b: CoachDailySummary) => b.date.localeCompare(a.date)).slice(0, 14) : [],
       weekly: Array.isArray(raw?.weekly) ? raw.weekly.sort((a: CoachWeeklySummary, b: CoachWeeklySummary) => b.startDate.localeCompare(a.startDate)).slice(0, 52) : [],
+      assessment: raw?.assessment && typeof raw.assessment === 'object' && Number.isFinite(raw.assessment.score) ? raw.assessment as CoachLevelAssessment : undefined,
     };
   } catch { return emptyJournal(); }
 };
 
-export function useCoach(_serviceKey: string, addUsage: UsageHandler, active = false) {
+export function useCoach(_serviceKey: string, addUsage: UsageHandler, active = false, ieltsScore?: number) {
   const [history, setHistory] = useState<CoachMessage[]>([]), [memory, setMemory] = useState<CoachMemory>(EMPTY_COACH_MEMORY);
   const [busy, setBusy] = useState(false), [recording, setRecording] = useState(false), [error, setError] = useState(''), [tip, setTip] = useState('');
   const [practice, setPractice] = useState<{ title: string; exercises: CoachExercise[] }>(), [speechRequest, setSpeechRequest] = useState<{ id: number; text: string }>();
   const [journal, setJournal] = useState<CoachJournal>(emptyJournal);
-  const recorder = useRef<VoiceRecorder | undefined>(undefined), abort = useRef<AbortController | undefined>(undefined), keyRef = useRef('managed'), usageRef = useRef(addUsage);
+  const recorder = useRef<VoiceRecorder | undefined>(undefined), abort = useRef<AbortController | undefined>(undefined), keyRef = useRef('managed'), usageRef = useRef(addUsage), ieltsScoreRef = useRef(ieltsScore);
   const historyRef = useRef<CoachMessage[]>([]), memoryRef = useRef<CoachMemory>(EMPTY_COACH_MEMORY), busyRef = useRef(false), recordingRef = useRef(false), journalRef = useRef<CoachJournal>(emptyJournal());
   const cloudReady = useRef(false);
   const messageId = useRef(0), speechId = useRef(0);
   usageRef.current = addUsage;
+  ieltsScoreRef.current = ieltsScore;
   const setBusyState = (value: boolean) => { busyRef.current = value; setBusy(value); };
   const setRecordingState = (value: boolean) => { recordingRef.current = value; setRecording(value); };
   const saveSession = (messages: CoachMessage[], nextMemory: CoachMemory) => { const data = { history: messages.slice(-80), memory: nextMemory }; try { localStorage.setItem('lucky-coach-state', JSON.stringify(data)); } catch {} if (cloudReady.current) void saveCloudRecord('coach-state', 'coach-state', data).catch(() => {}); };
   const saveJournal = useCallback((next: CoachJournal) => { journalRef.current = next; setJournal(next); try { localStorage.setItem(JOURNAL_KEY, JSON.stringify(next)); } catch {} if (cloudReady.current) void saveCloudRecord('coach-journal', 'coach-journal', next).catch(() => {}); }, []);
   const updateHistory = (messages: CoachMessage[]) => { historyRef.current = messages; setHistory(messages); };
-  const updateMemory = (nextMemory: CoachMemory) => { memoryRef.current = nextMemory; setMemory(nextMemory); };
+  const updateMemory = (nextMemory: CoachMemory) => {
+    const score = ieltsScoreRef.current;
+    const normalized = cleanMemory(nextMemory);
+    const next = typeof score === 'number' && Number.isInteger(score) && score >= 1 && score <= 9 ? { ...normalized, level: `Self-reported IELTS ${score}` } : normalized;
+    memoryRef.current = next; setMemory(next);
+  };
+
+  useEffect(() => {
+    updateMemory(memoryRef.current);
+    saveSession(historyRef.current, memoryRef.current);
+  }, [ieltsScore]);
 
   useEffect(() => {
     try {
@@ -160,9 +176,21 @@ export function useCoach(_serviceKey: string, addUsage: UsageHandler, active = f
     finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
   }, [saveJournal]);
   const clearSession = useCallback(() => { abort.current?.abort(); void recorder.current?.stop(false); setRecordingState(false); updateHistory([]); setPractice(undefined); setTip(''); setError(''); saveSession([], memoryRef.current); }, []);
+  const evaluateLevel = useCallback(async () => {
+    if (busyRef.current || totalPracticeSeconds(journalRef.current) < 7200 || journalRef.current.assessment) return undefined;
+    const controller = new AbortController(); abort.current = controller; setBusyState(true); setError('');
+    try {
+      const result = await coachLevelAssessmentDirect({ key: keyRef.current, history: historyRef.current, memory: memoryRef.current, signal: controller.signal });
+      usageRef.current(result.usage.tokens, result.usage.cost);
+      const assessment: CoachLevelAssessment = { id: `assessment-${Date.now()}`, createdAt: new Date().toISOString(), score: Math.max(1, Math.min(9, Math.round(result.data.score))), grammar: result.data.grammar, vocabulary: result.data.vocabulary, fluency: result.data.fluency, conclusion: result.data.conclusion };
+      saveJournal({ ...journalRef.current, assessment }); return assessment;
+    } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '暂时无法完成水平评估'); return undefined; }
+    finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
+  }, [saveJournal]);
   return {
     history, memory, busy, recording, error, tip, practice, speechRequest,
-    todaySeconds: journal.todayDate === dateKey() ? journal.todaySeconds : 0, dailySummaries: journal.daily, weeklySummaries: journal.weekly,
-    beginSession, sendText: submitLearner, startRecording, stopRecording, createPractice, summarizeToday, clearSession, setPractice, setError,
+    todaySeconds: journal.todayDate === dateKey() ? journal.todaySeconds : 0, totalPracticeSeconds: totalPracticeSeconds(journal), latestAssessment: journal.assessment, eligibleForAssessment: totalPracticeSeconds(journal) >= 7200,
+    dailySummaries: journal.daily, weeklySummaries: journal.weekly,
+    beginSession, sendText: submitLearner, startRecording, stopRecording, createPractice, summarizeToday, clearSession, evaluateLevel, setPractice, setError,
   };
 }

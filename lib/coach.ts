@@ -8,7 +8,7 @@ export type CoachExercise = {
 export type CoachUsage = { tokens: number; cost: number };
 export type CoachVocabulary = { word: string; definition: string };
 export type CoachGrammar = { point: string; example: string };
-export type CoachMistake = { original: string; better: string; reason: string };
+export type CoachMistake = { original: string; better: string; reason: string; confidence: 'confirmed' };
 export type CoachDailySummary = {
   id: string; date: string; minutes: number; overview: string; mainFocus: string[];
   likelyMistakes: CoachMistake[]; vocabulary: CoachVocabulary[]; grammar: CoachGrammar[];
@@ -16,6 +16,9 @@ export type CoachDailySummary = {
 export type CoachWeeklySummary = {
   id: string; startDate: string; endDate: string; minutes: number; overview: string;
   progress: string[]; nextFocus: string[]; vocabulary: CoachVocabulary[]; grammar: CoachGrammar[];
+};
+export type CoachLevelAssessment = {
+  id: string; createdAt: string; score: number; grammar: string; vocabulary: string; fluency: string; conclusion: string;
 };
 
 export const EMPTY_COACH_MEMORY: CoachMemory = { level: 'discovering', topics: [], strengths: [], focus: [], phrases: [] };
@@ -97,8 +100,8 @@ const grammarSchema = {
 
 export async function coachDailySummaryDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; existing?: CoachDailySummary; signal: AbortSignal }) {
   const mistakeSchema = {
-    type: 'object', additionalProperties: false, required: ['original', 'better', 'reason'],
-    properties: { original: { type: 'string' }, better: { type: 'string' }, reason: { type: 'string' } },
+    type: 'object', additionalProperties: false, required: ['original', 'better', 'reason', 'confidence'],
+    properties: { original: { type: 'string' }, better: { type: 'string' }, reason: { type: 'string' }, confidence: { type: 'string', enum: ['confirmed'] } },
   };
   const schema = {
     type: 'object', additionalProperties: false, required: ['overview', 'mainFocus', 'likelyMistakes', 'vocabulary', 'grammar'],
@@ -113,7 +116,7 @@ export async function coachDailySummaryDirect(input: { key: string; history: Coa
   const prompt = `Create or update today's English learning recall from the conversation below. Write all learning content in clear, encouraging English for the learner to read. Be specific, constructive, and concise.
 Focus first on what the learner practised, useful next steps, and language worth carrying forward. Include only vocabulary and grammar grounded in this conversation. Vocabulary rows must contain an English word or short phrase and an English definition. Grammar rows must contain a named grammar point and one natural English example.
 The transcript may contain speech-recognition noise, omitted words, false starts, or self-corrections. Treat a self-reported IELTS score or level in learner memory as meaningful context: for IELTS 7 or 8, assume isolated awkward wording is a recording artefact unless the transcript gives strong contrary evidence. Across every level, only add likelyMistakes for a confirmed language issue: it must either recur in independently clear learner turns or be unambiguously wrong in context and impossible to explain as transcription noise. Do not make a correction from one short phrase, a word-order glitch, a missing word, punctuation, a homophone, or a phrase that could have been self-corrected in speech. If uncertain, omit it completely. Never label a possible recording artefact as a learner mistake. Empty arrays are expected when evidence is insufficient.
-Use warm learner-facing labels in the content: describe a correction as one thing to refine, never as a failure or weakness. Never invent a mistake.
+For every included likelyMistakes item, set confidence to "confirmed". Re-evaluate the existing recall under these stricter evidence rules and remove any earlier correction that is not confirmed. Use warm learner-facing labels in the content: describe a correction as one thing to refine, never as a failure or weakness. Never invent a mistake.
 Learner memory: ${JSON.stringify(input.memory)}
 Existing recall from earlier conversations today (merge rather than repeat): ${JSON.stringify(input.existing || null)}
 Conversation:
@@ -135,4 +138,16 @@ export async function coachWeeklySummaryDirect(input: { key: string; daily: Coac
 Daily recalls:
 ${JSON.stringify(input.daily).slice(0, 18000)}`;
   return coachRequest<Omit<CoachWeeklySummary, 'id' | 'startDate' | 'endDate' | 'minutes'>>(input.key, [{ role: 'system', content: 'You consolidate daily English recalls into a concise weekly learning record. Return only the requested JSON.' }, { role: 'user', content: prompt }], 'luna_weekly_recall', schema, input.signal);
+}
+
+export async function coachLevelAssessmentDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; signal: AbortSignal }) {
+  const schema = {
+    type: 'object', additionalProperties: false, required: ['score', 'grammar', 'vocabulary', 'fluency', 'conclusion'],
+    properties: {
+      score: { type: 'number', minimum: 1, maximum: 9 }, grammar: { type: 'string' }, vocabulary: { type: 'string' }, fluency: { type: 'string' }, conclusion: { type: 'string' },
+    },
+  };
+  const transcript = input.history.filter(message => message.role === 'learner').map(message => `Learner: ${message.text}`).join('\n').slice(-16000);
+  const prompt = `Estimate the learner's current practical IELTS band from the learner turns below and their memory. This is an internal coaching reference, not an official IELTS score. Use the standard IELTS 1–9 scale. Write concise, constructive English. Assess only clear recurring evidence; do not penalize likely speech-recognition noise, isolated slips, or one-off recording artefacts. For a self-reported IELTS 7 or 8, require strong repeated evidence before estimating lower. Give one short assessment for grammar, vocabulary, fluency, and a plain final conclusion.\nLearner memory: ${JSON.stringify(input.memory)}\nLearner turns:\n${transcript}`;
+  return coachRequest<Omit<CoachLevelAssessment, 'id' | 'createdAt'>>(input.key, [{ role: 'system', content: 'You make careful, evidence-based IELTS-style coaching assessments. Return only the requested JSON.' }, { role: 'user', content: prompt }], 'luna_level_assessment', schema, input.signal);
 }

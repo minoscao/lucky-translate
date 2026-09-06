@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
-import { CONTEXT_LIMITS, createConversationStore, conversationText, RecordGesture, selectLanguage, transcriptForLanguage } from '../lib/translation.ts';
+import { RecordGesture, selectLanguage, transcriptForLanguage } from '../lib/translation.ts';
 
 test('double tap locks recording; a later tap stops it; long press releases', () => {
   const g = new RecordGesture();

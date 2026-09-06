@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
-import { ArrowDownUp, ArrowLeft, ArrowUpFromLine, Check, ChevronDown, ChevronUp, CircleHelp, Copy, Download, History, LoaderCircle, LockKeyhole, LogOut, Mic, Settings2, ShieldCheck, Square, Volume2, X } from 'lucide-react';
+import { ArrowDownUp, ArrowLeft, ArrowUpFromLine, Check, ChevronDown, ChevronUp, CircleHelp, Copy, Download, GraduationCap, History, LoaderCircle, LockKeyhole, LogOut, Mic, Settings2, ShieldCheck, Square, Volume2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -20,6 +20,21 @@ type InstallEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{
 type LayoutMode = 'face-to-face' | 'single-operator';
 type SoloDirection = 'listening' | 'speaking';
 type AppMode = 'translator' | 'coach';
+type Profile = { name?: string; ieltsScore?: number };
+
+const IELTS_BANDS = [
+  { score: 1, cn: '几乎不能用英文交流；只认识零散词。', en: 'You know a few words, but everyday English is still mostly unfamiliar.' },
+  { score: 2, cn: '能听懂或说出极少量熟词，完整意思还很难表达。', en: 'You can catch a few familiar words, but full messages are still difficult.' },
+  { score: 3, cn: '能应付非常简单的固定场景，但一离开熟悉话题就容易卡住。', en: 'You can manage set phrases in familiar situations, but free conversation is hard.' },
+  { score: 4, cn: '能读懂简单短句、处理基础生活需求；一聊复杂内容就容易断。', en: 'You can handle simple everyday needs and short texts, but longer ideas often break down.' },
+  { score: 5, cn: '大致相当于四级高分、六级刚过：能读简单英文，也能表达基本意思，但真实交流会吃力。', en: 'Roughly strong CET-4 / a passing CET-6: you can read simple English and get basic ideas across, but real-life conversation still takes effort.' },
+  { score: 6, cn: '大致相当于六级高分：学习或工作英语基本够用，但更自然、反应更快还需要练。', en: 'Roughly a strong CET-6: English works for study and work, while natural phrasing and quicker responses still need practice.' },
+  { score: 7, cn: '能比较自如地讨论熟悉或专业话题；重点是让表达更准确、更像真实交流。', en: 'You can discuss familiar and professional topics with confidence. The focus is precision, range, and natural flow.' },
+  { score: 8, cn: '英文已经非常熟练；陪练更重视细微语气、表达选择和高难场景。', en: 'You are highly fluent. Coaching focuses on nuance, word choice, tone, and demanding situations.' },
+  { score: 9, cn: '接近母语者水平；重点是保持表达风格，并处理极少见的细节。', en: 'You use English with near-native control. Coaching focuses on style and the rarest details.' },
+] as const;
+
+const validIeltsScore = (value: unknown): number | undefined => typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 9 ? value : undefined;
 function RecordButton({ controller: t, side, autoSpeakSide, detectSpeaker = true, compact = false, onBeforeRecord }: { controller: ReturnType<typeof useTranslator>; side: 0 | 1; autoSpeakSide?: 0 | 1; detectSpeaker?: boolean; compact?: boolean; onBeforeRecord: () => void }) {
   const [pressed, setPressed] = useState(false);
   const keyHeld = useRef(false), pointerHeld = useRef(false);
@@ -140,24 +155,26 @@ function SoloDirectionControls({ controller: t, direction, selfSide, otherSide, 
 export default function Home() {
   const t = useTranslator();
   const [appMode, setAppMode] = useState<AppMode | null>(null);
-  const coach = useCoach('managed', t.addUsage, appMode === 'coach');
   const [account, setAccount] = useState<AccountSnapshot | null>();
   const [settingsReturnMode, setSettingsReturnMode] = useState<AppMode | null>(null);
   const [coachEntryStage, setCoachEntryStage] = useState<'chat' | 'dashboard'>('chat');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [authEmail, setAuthEmail] = useState(''), [authUsername, setAuthUsername] = useState(''), [authPassword, setAuthPassword] = useState(''), [authError, setAuthError] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
-  const [dialog, setDialog] = useState<'settings' | 'help' | 'history' | 'text' | 'edit' | 'name' | 'usage' | null>(null);
+  const [dialog, setDialog] = useState<'settings' | 'help' | 'history' | 'text' | 'edit' | 'name' | 'ielts' | 'password' | 'usage' | null>(null);
   const [dialogSide, setDialogSide] = useState<0 | 1>(1);
   const [draftText, setDraftText] = useState('');
   const [formError, setFormError] = useState(''), [copied, setCopied] = useState(false);
   const [installed, setInstalled] = useState(false), [installEvent, setInstallEvent] = useState<InstallEvent>();
   const [speaking, setSpeaking] = useState(false);
   const [ownName, setOwnName] = useState('Me'), [draftName, setDraftName] = useState('');
+  const [ieltsScore, setIeltsScore] = useState<number>();
+  const [currentPassword, setCurrentPassword] = useState(''), [nextPassword, setNextPassword] = useState('');
   const [editingId, setEditingId] = useState<number>();
   const [speechSpeed, setSpeechSpeed] = useState(1);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('face-to-face');
   const [soloDirection, setSoloDirection] = useState<SoloDirection>('listening');
+  const coach = useCoach('managed', t.addUsage, appMode === 'coach', ieltsScore);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const playedSpeech = useRef(0);
   const playedCoachSpeech = useRef(0);
@@ -181,7 +198,7 @@ export default function Home() {
     queueMicrotask(() => { const speed = Number(localStorage.getItem('lucky-speech-speed')); if ([.75, 1, 1.5, 2].includes(speed)) setSpeechSpeed(speed); });
     queueMicrotask(() => { const layout = localStorage.getItem('lucky-layout'); if (layout === 'single-operator' || layout === 'same-direction') setLayoutMode('single-operator'); });
     queueMicrotask(() => { if (localStorage.getItem('lucky-solo-direction') === 'speaking') setSoloDirection('speaking'); });
-    queueMicrotask(() => { try { const profile = JSON.parse(localStorage.getItem('lucky-profile') || 'null'); if (typeof profile?.name === 'string') setOwnName(profile.name.trim().slice(0, 24) || 'Me'); } catch {} });
+    queueMicrotask(() => { try { const profile = JSON.parse(localStorage.getItem('lucky-profile') || 'null') as Profile; if (typeof profile?.name === 'string') setOwnName(profile.name.trim().slice(0, 24) || 'Me'); setIeltsScore(validIeltsScore(profile?.ieltsScore)); } catch {} });
     const before = (event: Event) => { event.preventDefault(); setInstallEvent(event as InstallEvent); };
     const installedHandler = () => { setInstalled(true); setInstallEvent(undefined); };
     window.addEventListener('beforeinstallprompt', before); window.addEventListener('appinstalled', installedHandler);
@@ -190,16 +207,19 @@ export default function Home() {
   }, []);
   useEffect(() => {
     if (!account || account.status !== 'active') return;
-    try {
-      const profile = JSON.parse(localStorage.getItem('lucky-profile') || 'null');
-      if (typeof profile?.name === 'string') return;
-    } catch {}
     let cancelled = false;
-    void fetch('/api/cloud?type=profile', { credentials: 'same-origin' }).then(async response => response.ok ? await response.json() as { records?: Array<{ data: { name?: string } }> } : null).then(payload => {
+    void fetch('/api/cloud?type=profile', { credentials: 'same-origin' }).then(async response => response.ok ? await response.json() as { records?: Array<{ data: Profile }> } : null).then(payload => {
       if (cancelled) return;
-      const remote = payload?.records?.at(-1)?.data.name?.trim().slice(0, 24);
-      if (remote) { setOwnName(remote); try { localStorage.setItem('lucky-profile', JSON.stringify({ name: remote })); } catch {} return; }
-      const name = account.username || 'Me'; setOwnName(name); setDraftName(name); setDialog('name');
+      const remoteProfile = payload?.records?.at(-1)?.data;
+      const remoteName = typeof remoteProfile?.name === 'string' ? remoteProfile.name.trim().slice(0, 24) : '';
+      const remoteScore = validIeltsScore(remoteProfile?.ieltsScore);
+      let localProfile: Profile = {};
+      try { localProfile = JSON.parse(localStorage.getItem('lucky-profile') || 'null') || {}; } catch {}
+      const name = remoteName || (typeof localProfile.name === 'string' ? localProfile.name.trim().slice(0, 24) : '') || account.username || 'Me';
+      const score = remoteScore ?? validIeltsScore(localProfile.ieltsScore);
+      setOwnName(name); setIeltsScore(score);
+      try { localStorage.setItem('lucky-profile', JSON.stringify({ name, ...(score ? { ieltsScore: score } : {}) })); } catch {}
+      if (!remoteName && !localProfile.name) { setDraftName(name); setDialog('name'); }
     }).catch(() => { if (!cancelled) { const name = account.username || 'Me'; setOwnName(name); setDraftName(name); setDialog('name'); } });
     return () => { cancelled = true; };
   }, [account]);
@@ -215,10 +235,23 @@ export default function Home() {
   const open = (name: NonNullable<typeof dialog>, side: 0 | 1 = 1) => {
     void t.stop(); t.setNeedsSettings(false); setDialogSide(side); setFormError('');
     if (name === 'name') setDraftName(ownName === 'Me' ? '' : ownName);
+    if (name === 'password') { setCurrentPassword(''); setNextPassword(''); }
     setDialog(name);
   };
   const closeDialog = () => { setDialog(null); if (settingsReturnMode) { setAppMode(settingsReturnMode); setSettingsReturnMode(null); } };
-  const saveName = (value: string) => { const name = value.trim().slice(0, 24) || 'Me'; setOwnName(name); try { localStorage.setItem('lucky-profile', JSON.stringify({ name })); } catch {} void saveCloudRecord('profile', 'profile', { name }); closeDialog(); };
+  const saveProfile = (next: Profile) => {
+    const profile: Profile = { name: next.name?.trim().slice(0, 24) || ownName || 'Me', ieltsScore: validIeltsScore(next.ieltsScore ?? ieltsScore) };
+    setOwnName(profile.name || 'Me'); setIeltsScore(profile.ieltsScore);
+    try { localStorage.setItem('lucky-profile', JSON.stringify(profile)); } catch {}
+    void saveCloudRecord('profile', 'profile', profile);
+  };
+  const saveName = (value: string) => { saveProfile({ name: value.trim().slice(0, 24) || 'Me' }); closeDialog(); };
+  const saveIeltsScore = (score: number) => { saveProfile({ name: ownName, ieltsScore: score }); closeDialog(); };
+  const changePassword = async () => {
+    setFormError('');
+    try { await accountRequest('/api/auth', { method: 'POST', body: JSON.stringify({ action: 'change-password', currentPassword, nextPassword }) }); closeDialog(); }
+    catch (error) { setFormError(error instanceof Error ? error.message : '暂时无法修改密码'); }
+  };
   const editSentence = (side: 0 | 1, id: number, text: string) => { setEditingId(id); setDraftText(text); open('edit', side); };
   const stopSpeech = useCallback(() => {
     speechRequest.current++; speechAbort.current?.abort(); speechAbort.current = undefined;
@@ -314,7 +347,7 @@ export default function Home() {
   </section></main>;
   if (account.status !== 'active') return <main className="access-page"><section className="access-card member-pending"><div className="access-mark"><ShieldCheck /></div><h1>{account.status === 'pending' ? '注册申请已提交' : account.status === 'expired' ? '会员已到期' : '账户已暂停'}</h1><p>{account.status === 'pending' ? '管理员激活会员后即可开始使用。' : '请联系管理员恢复账户。'}</p><strong>{account.email || account.username}</strong><Button className="form-submit" onClick={() => void accountRequest<{ account: AccountSnapshot | null }>('/api/auth').then(data => setAccount(data.account))}>刷新状态</Button><Button variant="ghost" onClick={() => void logout()}><LogOut />退出账户</Button></section></main>;
   if (appMode === null) return <main className="mode-page"><section className="mode-card"><Image className="lucky-cat" src="/lucky-cat.webp" width={128} height={128} alt="Lucky cat" unoptimized /><p className="mode-brand">LUCKY</p><h1>What would you like to do?</h1><div className="member-summary"><span>{account.username} · {account.level.toUpperCase()}</span><strong>剩余 {duration(remaining)}</strong><small>云空间 {(account.storage.bytes / 1024 / 1024).toFixed(1)} / {(account.storage.limitBytes / 1024 / 1024).toFixed(0)} MB</small></div>{account.storage.warning && <button className="storage-warning" onClick={() => { setAppMode('translator'); queueMicrotask(() => open('history')); }}>云空间接近上限，请导出对话</button>}<div className="mode-options"><Button onClick={() => { setCoachEntryStage('chat'); setAppMode('coach'); if (coach.history.length === 0 && !coach.busy) void coach.beginSession(); }}><strong>English Coach</strong><span>Have a natural conversation and practise afterwards</span></Button><Button variant="outline" onClick={() => setAppMode('translator')}><strong>Translator</strong><span>Translate a live conversation in both directions</span></Button></div><div className="mode-account-actions"><Button variant="ghost" className="mode-settings" onClick={() => { setSettingsReturnMode(null); setAppMode('translator'); queueMicrotask(() => open('settings')); }}><Settings2 />设置</Button><Button variant="ghost" className="mode-settings" onClick={() => void logout()}><LogOut />退出</Button></div></section></main>;
-  if (appMode === 'coach') return <CoachMode coach={coach} speaking={speaking} initialStage={coachEntryStage} onBack={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('chat'); setAppMode(null); }} onSettings={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('settings')); }} onSpeak={text => void playSpeech(text, 'en')} />;
+  if (appMode === 'coach') return <CoachMode coach={coach} speaking={speaking} ieltsScore={ieltsScore} initialStage={coachEntryStage} onBack={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('chat'); setAppMode(null); }} onSettings={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('settings')); }} onIelts={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('ielts')); }} onSecurity={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('password')); }} onLogout={() => void logout()} onSpeak={text => void playSpeech(text, 'en')} />;
   return <main className="translator"><div className={`app-frame ${layoutMode === 'single-operator' ? 'single-operator' : ''}`}>
     {panelOrder.map((side, index) => <LanguagePanel key={side} controller={t} onHistory={() => open('history')} totals={{ ...t.usageTotals, dayCost: account.usage.todayCost, dayTokens: account.usage.todayTokens, monthCost: account.usage.monthCost, monthTokens: account.usage.monthTokens }} multiplier={account.costMultiplier} side={side} visualRow={layoutMode === 'single-operator' ? index + 1 : side === 0 ? 1 : 3} isSelf={side === selfSide} facingAway={layoutMode === 'face-to-face' && side === 0} showRecord={layoutMode === 'face-to-face'} ownName={ownName} pair={t.pair} entries={panelEntries[side]} locked={locked} canSpeak={true} onLanguage={t.changePair} onEdit={(id, text) => editSentence(side, id, text)} onSpeak={text => void playSpeech(text, t.pair[side])} onBeforeRecord={stopSpeech} onUsage={() => open('usage', side)} />)}
     <section className={`control-deck ${layoutMode === 'single-operator' ? 'single-control-deck' : ''}`} aria-label="录音控制">
@@ -334,14 +367,21 @@ export default function Home() {
     {speaking && <Button variant="secondary" className="speech-stop" onClick={stopSpeech}><Square />停止朗读</Button>}
   </div>
   <Dialog open={visibleDialog !== null} onOpenChange={value => { if (!value) { if (visibleDialog === 'name') saveName(ownName); else closeDialog(); t.setNeedsSettings(false); } }}>
-    <DialogContent className={`app-dialog ${visibleDialog === 'history' ? 'conversation-dialog' : ''} ${visibleDialog === 'edit' ? 'edit-dialog' : ''} ${layoutMode === 'face-to-face' && dialogSide === 0 && !t.needsSettings && !['history', 'edit', 'usage'].includes(visibleDialog || '') ? 'upside-down' : ''}`} showCloseButton={false}>
-      <DialogHeader><DialogTitle>{visibleDialog === 'name' ? '怎么称呼你？' : visibleDialog === 'settings' ? '账户与设置' : visibleDialog === 'history' ? '完整对话' : visibleDialog === 'edit' ? '修改当前这句' : visibleDialog === 'text' ? '输入文字' : visibleDialog === 'usage' ? '使用明细' : '随时打开，面对面聊'}</DialogTitle><DialogDescription>
-        {visibleDialog === 'name' ? 'What should we call you?' : visibleDialog === 'settings' ? '个人偏好会保存在这个账户和当前设备。' : visibleDialog === 'history' ? (locked ? '正在整理最后的对话…' : `${t.history.length} 句 · 已同步到个人云存档`) : visibleDialog === 'edit' ? `按${language(t.pair[dialogSide])?.label}修改，保存后更新双方译文。` : visibleDialog === 'text' ? '任意语言都可以，会同时转换成双方的语言。' : visibleDialog === 'usage' ? '费用、Token 和会员计费时间均来自云端账户。' : '添加到手机主屏幕，像应用一样打开。'}
+    <DialogContent className={`app-dialog ${visibleDialog === 'history' ? 'conversation-dialog' : ''} ${visibleDialog === 'edit' ? 'edit-dialog' : ''} ${visibleDialog === 'ielts' ? 'ielts-dialog' : ''} ${layoutMode === 'face-to-face' && dialogSide === 0 && !t.needsSettings && !['history', 'edit', 'usage', 'ielts'].includes(visibleDialog || '') ? 'upside-down' : ''}`} showCloseButton={false}>
+      <DialogHeader><DialogTitle>{visibleDialog === 'name' ? '怎么称呼你？' : visibleDialog === 'ielts' ? '设定雅思成绩' : visibleDialog === 'password' ? '安全密码' : visibleDialog === 'settings' ? '账户与设置' : visibleDialog === 'history' ? '完整对话' : visibleDialog === 'edit' ? '修改当前这句' : visibleDialog === 'text' ? '输入文字' : visibleDialog === 'usage' ? '使用明细' : '随时打开，面对面聊'}</DialogTitle><DialogDescription>
+        {visibleDialog === 'name' ? 'What should we call you?' : visibleDialog === 'ielts' ? '选择最接近你当前水平的一档。它会帮助 English Coach 调整对话难度和纠错尺度；这不是官方测评。' : visibleDialog === 'password' ? '使用至少 8 位的新密码，保障你的云端学习记录。' : visibleDialog === 'settings' ? '个人偏好会保存在这个账户和当前设备。' : visibleDialog === 'history' ? (locked ? '正在整理最后的对话…' : `${t.history.length} 句 · 已同步到个人云存档`) : visibleDialog === 'edit' ? `按${language(t.pair[dialogSide])?.label}修改，保存后更新双方译文。` : visibleDialog === 'text' ? '任意语言都可以，会同时转换成双方的语言。' : visibleDialog === 'usage' ? '费用、Token 和会员计费时间均来自云端账户。' : '添加到手机主屏幕，像应用一样打开。'}
       </DialogDescription></DialogHeader>
       <DialogClose render={<Button variant="ghost" className="dialog-close" aria-label="关闭" />}><X /></DialogClose>
       {visibleDialog === 'name' && <form onSubmit={event => { event.preventDefault(); saveName(draftName); }}><label htmlFor="display-name" className="field-label">你的名字 / Your name</label><Input id="display-name" className="app-input" value={draftName} onChange={event => setDraftName(event.target.value)} placeholder="Me" maxLength={24} autoComplete="nickname" /><p className="field-note">只保存在这台设备，下次自动使用。</p><Button type="submit" className="form-submit">{draftName.trim() ? '记住名字，开始对话' : '使用 Me，开始对话'}</Button></form>}
+      {visibleDialog === 'ielts' && <section className="ielts-picker" aria-label="雅思成绩参考">
+        {IELTS_BANDS.map(band => <button key={band.score} type="button" className={ieltsScore === band.score ? 'selected' : ''} aria-pressed={ieltsScore === band.score} onClick={() => saveIeltsScore(band.score)}>
+          <strong><span>IELTS {band.score}</span>{ieltsScore === band.score && <Check aria-label="当前选择" />}</strong><span>{band.cn}</span><small lang="en">{band.en}</small>
+        </button>)}
+      </section>}
+      {visibleDialog === 'password' && <form onSubmit={event => { event.preventDefault(); void changePassword(); }}><label className="field-label" htmlFor="current-password">当前密码</label><Input id="current-password" className="app-input" type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} autoComplete="current-password" /><label className="field-label" htmlFor="next-password">新密码</label><Input id="next-password" className="app-input" type="password" value={nextPassword} onChange={event => setNextPassword(event.target.value)} autoComplete="new-password" minLength={8} />{formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={!currentPassword || nextPassword.length < 8}>保存新密码</Button></form>}
       {visibleDialog === 'settings' && <div className="settings-form">
         <div className="profile-setting"><span>{ownName}</span><Button type="button" variant="ghost" onClick={() => open('name')}>修改名字</Button></div>
+        <div className="profile-setting profile-score"><span><GraduationCap />{ieltsScore ? `雅思 ${ieltsScore} 分` : '未设定雅思成绩'}</span><Button type="button" variant="ghost" onClick={() => open('ielts')}>设定雅思成绩</Button></div>
         <div className="profile-setting"><span>{account.username} · {account.level.toUpperCase()}</span><strong>剩余 {duration(remaining)}</strong></div>
         <label className="field-label" htmlFor="layout-mode">页面布局</label>
         <Select value={layoutMode} onValueChange={value => { if (!value) return; const layout = value as LayoutMode; setLayoutMode(layout); try { localStorage.setItem('lucky-layout', layout); } catch {} }}><SelectTrigger id="layout-mode" className="app-input"><SelectValue>{layoutMode === 'face-to-face' ? '面对面 · 双方操作' : '单人 · Listening / Speaking'}</SelectValue></SelectTrigger><SelectContent><SelectItem value="face-to-face">面对面 · 双方操作</SelectItem><SelectItem value="single-operator">单人 · Listening / Speaking</SelectItem></SelectContent></Select>

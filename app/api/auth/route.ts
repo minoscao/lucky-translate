@@ -14,7 +14,7 @@ export async function POST(request: Request) {
   if (!sameOrigin(request)) return json({ error: '请从当前页面操作' }, 403);
   try {
     await ensureBootstrap();
-    const body = await readJson<{ action?: unknown; email?: unknown; username?: unknown; password?: unknown }>(request);
+    const body = await readJson<{ action?: unknown; email?: unknown; username?: unknown; password?: unknown; currentPassword?: unknown; nextPassword?: unknown }>(request);
     const action = body.action, email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '', requestedUsername = typeof body.username === 'string' ? body.username.trim() : '', password = typeof body.password === 'string' ? body.password : '';
     if (action === 'login') {
       if (!email || email.length > 254 || !password || password.length > 128) return json({ error: '请输入邮箱或用户名和密码' }, 400);
@@ -35,6 +35,15 @@ export async function POST(request: Request) {
         VALUES (?1, ?2, ?3, ?4, 'pending', 'pending', 0, 0, 0, 0, 104857600, NULL, '', ?5, ?5)`).bind(id, username, email, passwordHash, now).run();
       const account = await findAccountByLogin(email); if (!account) throw new Error('账户创建失败');
       return json({ account: await accountSnapshot(account) }, 201, { 'Set-Cookie': await createSession(request, account) });
+    }
+    if (action === 'change-password') {
+      const account = await getAccount(request), currentPassword = typeof body.currentPassword === 'string' ? body.currentPassword : '', nextPassword = typeof body.nextPassword === 'string' ? body.nextPassword : '';
+      if (!account) return json({ error: '请先登录' }, 401);
+      if (nextPassword.length < 8 || nextPassword.length > 128) return json({ error: '新密码至少需要 8 位' }, 400);
+      const row = await getDb().prepare('SELECT password_hash FROM users WHERE id = ?1').bind(account.id).first<{ password_hash: string }>();
+      if (!row || !await verifyPassword(currentPassword, row.password_hash)) return json({ error: '当前密码不正确' }, 401);
+      await getDb().prepare('UPDATE users SET password_hash = ?1, updated_at = ?2 WHERE id = ?3').bind(await hashPassword(nextPassword), Date.now(), account.id).run();
+      return json({ account: await accountSnapshot(account) });
     }
     return json({ error: '操作无效' }, 400);
   } catch (error) { return fail(error); }

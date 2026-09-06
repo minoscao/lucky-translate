@@ -258,6 +258,24 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .coach-summary > header h1, .coach-dashboard > header h1 { margin: 2px 0; font-size: clamp(1.45rem, 5vw, 2rem); }
 .coach-summary > header small, .coach-dashboard > header small { color: var(--self-accent); font-size: .7rem; font-weight: 800; letter-spacing: .1em; }
 .coach-summary > header span { color: var(--muted-foreground); font-size: .78rem; }
+.learning-levels { display: grid; gap: 10px; margin-bottom: 22px; }
+.learning-levels article { display: grid; gap: 8px; padding: 15px; border: 1px solid var(--border); border-radius: 16px; background: var(--secondary); }
+.learning-levels article > span, .learning-history h2, .summary-shortcuts h2, .center-options h2 { margin: 0; color: var(--muted-foreground); font-size: .75rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.learning-levels strong { color: var(--self-accent); font-size: 1.15rem; }
+.learning-levels p { margin: 0; font-size: .86rem; line-height: 1.45; }
+.learning-levels small { color: var(--muted-foreground); line-height: 1.55; }
+.learning-levels [data-slot=button] { justify-self: start; min-height: 36px; padding-inline: 8px; color: var(--self-accent); }
+.learning-history, .summary-shortcuts, .center-options { display: grid; gap: 10px; margin-top: 24px; }
+.history-summary, .summary-shortcuts > button { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--secondary); color: var(--foreground); text-align: left; transition: border-color .18s ease, background .18s ease; }
+.history-summary:hover, .history-summary:focus-visible, .summary-shortcuts > button:hover, .summary-shortcuts > button:focus-visible { border-color: var(--self-accent); outline: none; }
+.history-summary strong { color: var(--self-accent); font-size: .78rem; }
+.summary-shortcuts > button { justify-content: flex-start; }
+.summary-shortcuts > button:disabled { opacity: .48; }
+.summary-shortcuts svg { width: 19px; height: 19px; color: var(--self-accent); flex: 0 0 auto; }
+.summary-shortcuts span { display: grid; gap: 3px; }
+.summary-shortcuts small { color: var(--muted-foreground); font-size: .76rem; }
+.center-options { margin-bottom: 8px; padding-top: 20px; border-top: 1px solid var(--border); }
+.center-options [data-slot=button] { justify-content: flex-start; min-height: 46px; padding-inline: 8px; }
 .recall-content { display: grid; gap: 18px; text-align: left; }
 .recall-content section h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 8px; color: var(--muted-foreground); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
 .recall-content section h3 svg { width: 15px; height: 15px; color: var(--self-accent); stroke-width: 2.2; }
@@ -350,6 +368,18 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .mode-account-actions { display: flex; justify-content: center; gap: 4px; }
 .settings-form { display: grid; }
 .settings-form .field-label { margin-top: 14px; }
+.profile-score > span { display: inline-flex; align-items: center; gap: 8px; }
+.profile-score svg { width: 17px; height: 17px; }
+.ielts-dialog { width: min(560px, calc(100vw - 24px)); }
+.ielts-picker { display: grid; gap: 10px; }
+.ielts-picker > button { display: grid; gap: 5px; min-height: 96px; padding: 13px 14px; border: 1px solid var(--border); border-radius: 15px; background: var(--secondary); color: var(--foreground); text-align: left; transition: border-color .18s ease, background .18s ease, transform .18s ease; }
+.ielts-picker > button:hover, .ielts-picker > button:focus-visible { border-color: var(--self-accent); background: color-mix(in srgb, var(--self-accent) 11%, var(--secondary)); outline: none; }
+.ielts-picker > button:active { transform: scale(.99); }
+.ielts-picker > button.selected { border-color: var(--self-accent); background: color-mix(in srgb, var(--self-accent) 16%, var(--secondary)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--self-accent) 35%, transparent); }
+.ielts-picker strong { display: flex; align-items: center; justify-content: space-between; color: var(--self-accent); font-size: 1rem; }
+.ielts-picker strong svg { width: 18px; height: 18px; }
+.ielts-picker > button > span { line-height: 1.45; }
+.ielts-picker small { color: var(--muted-foreground); font-size: .78rem; line-height: 1.45; }
 .account-storage { display: flex; justify-content: space-between; gap: 12px; margin-top: 16px; padding: 12px 0; border-top: 1px solid var(--border); color: var(--muted-foreground); }
 .account-storage strong { color: var(--foreground); }
 
