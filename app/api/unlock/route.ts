@@ -1,9 +1,11 @@
 const COOKIE = 'lucky-site-access';
+const DEFAULT_PASSWORD = 'Minocolin1';
 const encoder = new TextEncoder();
 
+const accessPassword = () => process.env.SITE_PASSWORD || DEFAULT_PASSWORD;
+
 async function expectedToken() {
-  const password = process.env.SITE_PASSWORD;
-  if (!password) return null;
+  const password = accessPassword();
   const digest = await crypto.subtle.digest('SHA-256', encoder.encode(`lucky-site-access\n${password}`));
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
@@ -32,9 +34,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const expected = process.env.SITE_PASSWORD;
+  const expected = accessPassword();
   const token = await expectedToken();
-  if (!expected || !token) return json({ error: '网站密码尚未配置' }, 503);
   let password = '';
   try {
     const body = await request.json() as { password?: unknown };

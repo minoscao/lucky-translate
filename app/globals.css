@@ -172,7 +172,7 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .voice-dialog form { display: grid; gap: 14px; }
 .voice-step { padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: color-mix(in srgb, var(--secondary) 42%, transparent); }
 .voice-step strong { display: block; margin-bottom: 8px; font-size: .9375rem; }
-.voice-step p { margin: 0 0 14px; color: var(--muted-foreground); font-size: .8125rem; line-height: 1.7; }
+.voice-step p { margin: 0 0 14px; color: var(--muted-foreground); font-size: .8125rem; line-height: 1.7; white-space: pre-line; }
 .voice-step button { width: 100%; min-height: 48px; }
 .voice-step button[data-ready=true] { border-color: var(--partner-border); color: var(--partner-accent); }
 .default-voice { width: 100%; color: var(--muted-foreground); }

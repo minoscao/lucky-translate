@@ -269,3 +269,10 @@ test('site password is checked server-side and persists through an HttpOnly devi
     assert.match((await unlockRoute.DELETE()).headers.get('set-cookie'), /Max-Age=0/);
   } finally { if (previous === undefined) delete process.env.SITE_PASSWORD; else process.env.SITE_PASSWORD = previous; }
 });
+test('the internal-test password works when Cloudflare has no environment variable', async () => {
+  const previous = process.env.SITE_PASSWORD; delete process.env.SITE_PASSWORD;
+  try {
+    const response = await unlockRoute.POST(new Request('https://translator.test/api/unlock', { method: 'POST', body: JSON.stringify({ password: 'Minocolin1' }) }));
+    assert.equal(response.status, 200); assert.deepEqual(await response.json(), { unlocked: true });
+  } finally { if (previous !== undefined) process.env.SITE_PASSWORD = previous; }
+});
