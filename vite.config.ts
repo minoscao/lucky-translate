@@ -5,6 +5,8 @@ import { defineConfig, type ViteDevServer } from 'vite';
 import hostingConfig from './.openai/hosting.json';
 import { Readable } from 'node:stream';
 import { POST as translateLocally } from './app/api/translate/route';
+import { POST as speakLocally } from './app/api/speech/route';
+import { POST as createVoiceLocally } from './app/api/voice/route';
 import { DELETE as lockLocally, GET as checkAccessLocally, POST as unlockLocally } from './app/api/unlock/route';
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
@@ -59,8 +61,8 @@ export default defineConfig(async () => {
         configureServer(server: ViteDevServer) {
           server.middlewares.use(async (req, res, next) => {
             const path = req.url?.split('?')[0];
-            if (path !== '/api/translate' && path !== '/api/unlock') return next();
-            if (path === '/api/translate' && req.method !== 'POST') { res.writeHead(405); res.end(); return; }
+            if (!['/api/translate', '/api/speech', '/api/voice', '/api/unlock'].includes(path || '')) return next();
+            if (['/api/translate', '/api/speech', '/api/voice'].includes(path || '') && req.method !== 'POST') { res.writeHead(405); res.end(); return; }
             if (path === '/api/unlock' && !['GET', 'POST', 'DELETE'].includes(req.method || '')) { res.writeHead(405); res.end(); return; }
             const abort = new AbortController(); req.on('aborted', () => abort.abort());
             try {
@@ -70,7 +72,7 @@ export default defineConfig(async () => {
               const request = new Request(`http://${req.headers.host}${path}`, {
                 method: req.method, headers, ...(hasBody ? { body: Readable.toWeb(req) as ReadableStream<Uint8Array>, duplex: 'half' } : {}), signal: abort.signal,
               } as RequestInit);
-              const response = path === '/api/translate' ? await translateLocally(request) : req.method === 'GET' ? await checkAccessLocally(request) : req.method === 'DELETE' ? await lockLocally() : await unlockLocally(request);
+              const response = path === '/api/translate' ? await translateLocally(request) : path === '/api/speech' ? await speakLocally(request) : path === '/api/voice' ? await createVoiceLocally(request) : req.method === 'GET' ? await checkAccessLocally(request) : req.method === 'DELETE' ? await lockLocally() : await unlockLocally(request);
               res.writeHead(response.status, Object.fromEntries(response.headers));
               res.end(Buffer.from(await response.arrayBuffer()));
             } catch { res.writeHead(502, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: '本机连接中断，请重试' })); }

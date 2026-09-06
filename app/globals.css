@@ -168,9 +168,20 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .edit-input { flex: 1; min-height: 180px; resize: none; font-size: 1.25rem; line-height: 1.65; }
 .credential-actions { display: grid; gap: 8px; }
 .clear-key { color: var(--muted-foreground); }
-.usage-meter { display: flex; align-items: baseline; gap: 7px; margin-inline: auto; color: var(--side-color); white-space: nowrap; }
-.usage-meter strong { font-size: 1rem; }
-.usage-meter span { font-size: .6875rem; color: var(--muted-foreground); }
+.voice-dialog { width: min(520px, calc(100vw - 24px)); }
+.voice-dialog form { display: grid; gap: 14px; }
+.voice-step { padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: color-mix(in srgb, var(--secondary) 42%, transparent); }
+.voice-step strong { display: block; margin-bottom: 8px; font-size: .9375rem; }
+.voice-step p { margin: 0 0 14px; color: var(--muted-foreground); font-size: .8125rem; line-height: 1.7; }
+.voice-step button { width: 100%; min-height: 48px; }
+.voice-step button[data-ready=true] { border-color: var(--partner-border); color: var(--partner-accent); }
+.default-voice { width: 100%; color: var(--muted-foreground); }
+.usage-meter { display: flex; align-items: center; gap: 10px; margin-inline: auto; color: var(--side-color); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.usage-meter > span { display: grid; grid-template-columns: auto auto; align-items: baseline; column-gap: 4px; }
+.usage-meter small { grid-column: 1; color: var(--muted-foreground); font-size: .625rem; font-style: normal; }
+.usage-meter strong { grid-column: 2; font-size: .875rem; }
+.usage-meter em { grid-column: 1 / -1; color: var(--muted-foreground); font-size: .625rem; font-style: normal; }
+.usage-meter b { font-size: .625rem; color: var(--muted-foreground); font-weight: 500; }
 @media (max-width: 520px) { .usage-meter { order: 3; width: 100%; justify-content: center; } .panel-head { flex-wrap: wrap; } }
 @media (max-width: 440px) { .history-entry span { display: none; } .deck-top .wordmark { margin-right: auto; } }
 @media (max-width: 600px) {

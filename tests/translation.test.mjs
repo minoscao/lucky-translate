@@ -188,6 +188,69 @@ test('malformed or excessive context is rejected before any paid request', async
   } finally { globalThis.fetch = oldFetch; }
 });
 
+const speechSource = (await readFile(new URL('../app/api/speech/route.ts', import.meta.url), 'utf8')).replace('../../../lib/translation', new URL('../lib/translation.ts', import.meta.url).href);
+const speechJs = ts.transpile(speechSource, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext });
+const speechRoute = await import('data:text/javascript;base64,' + Buffer.from(speechJs).toString('base64'));
+function speechRequest(body, key = 'test-only-not-a-real-key') {
+  return new Request('https://translator.test/api/speech', { method: 'POST', headers: { Origin: 'https://translator.test', 'Content-Type': 'application/json', 'x-translation-key': key }, body: JSON.stringify(body) });
+}
+test('API speech uses the economical TTS model and returns exact provider usage', async () => {
+  const oldFetch = globalThis.fetch, calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return new Response([
+      `data: ${JSON.stringify({ type: 'speech.audio.delta', audio: Buffer.from('first').toString('base64') })}`,
+      `data: ${JSON.stringify({ type: 'speech.audio.delta', audio: Buffer.from('second').toString('base64') })}`,
+      `data: ${JSON.stringify({ type: 'speech.audio.done', usage: { input_tokens: 10, output_tokens: 100, total_tokens: 110 } })}`,
+      'data: [DONE]',
+    ].join('\n\n'), { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+  try {
+    const response = await speechRoute.POST(speechRequest({ text: '你好', language: 'zh-CN', voiceId: 'voice_mine123' }));
+    assert.equal(response.status, 200); assert.equal(await response.text(), 'firstsecond');
+    assert.equal(response.headers.get('X-Lucky-Usage-Tokens'), '110');
+    assert.equal(response.headers.get('X-Lucky-Usage-Cost'), '0.001206000000');
+    assert.equal(calls.length, 1); assert.equal(calls[0].url, 'https://api.openai.com/v1/audio/speech');
+    const input = JSON.parse(calls[0].options.body);
+    assert.equal(input.model, 'gpt-4o-mini-tts'); assert.equal(input.stream_format, 'sse'); assert.deepEqual(input.voice, { id: 'voice_mine123' });
+  } finally { globalThis.fetch = oldFetch; }
+});
+test('API speech rejects invalid requests before contacting the provider', async () => {
+  const oldFetch = globalThis.fetch; globalThis.fetch = () => { assert.fail('unexpected network request'); };
+  try {
+    assert.equal((await speechRoute.POST(speechRequest({ text: 'Hi', language: 'en' }, ''))).status, 401);
+    assert.equal((await speechRoute.POST(speechRequest({ text: 'Hi', language: 'unknown' }))).status, 400);
+    assert.equal((await speechRoute.POST(speechRequest({ text: 'Hi', language: 'en', voiceId: 'bad' }))).status, 400);
+    const crossOrigin = new Request('https://translator.test/api/speech', { method: 'POST', headers: { Origin: 'https://other.test', 'Content-Type': 'application/json', 'x-translation-key': 'test' }, body: JSON.stringify({ text: 'Hi', language: 'en' }) });
+    assert.equal((await speechRoute.POST(crossOrigin)).status, 403);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+const voiceSource = await readFile(new URL('../app/api/voice/route.ts', import.meta.url), 'utf8');
+const voiceJs = ts.transpile(voiceSource, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext });
+const voiceRoute = await import('data:text/javascript;base64,' + Buffer.from(voiceJs).toString('base64'));
+function voiceRequest(key = 'test-only-not-a-real-key') {
+  const data = new FormData(); data.set('name', 'Mia voice');
+  data.set('consent', new File([new Uint8Array([1, 2, 3])], 'consent.webm', { type: 'audio/webm' }));
+  data.set('sample', new File([new Uint8Array([4, 5, 6])], 'sample.webm', { type: 'audio/webm' }));
+  return new Request('https://translator.test/api/voice', { method: 'POST', headers: { Origin: 'https://translator.test', 'x-translation-key': key }, body: data });
+}
+test('voice setup uploads consent before the sample and returns the custom voice id', async () => {
+  const oldFetch = globalThis.fetch, calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith('/audio/voice_consents')) return Response.json({ id: 'consent_123' });
+    if (url.endsWith('/audio/voices')) return Response.json({ id: 'voice_123' });
+    assert.fail(`unexpected URL ${JSON.stringify(url)}`);
+  };
+  try {
+    const response = await voiceRoute.POST(voiceRequest());
+    assert.equal(response.status, 200); assert.deepEqual(await response.json(), { voiceId: 'voice_123' });
+    assert.equal(calls.length, 2); assert.equal(calls[0].options.headers.Authorization, 'Bearer test-only-not-a-real-key');
+    assert.equal(calls[0].options.body.get('language'), 'zh'); assert.equal(calls[1].options.body.get('consent'), 'consent_123');
+  } finally { globalThis.fetch = oldFetch; }
+});
+
 const unlockSource = await readFile(new URL('../app/api/unlock/route.ts', import.meta.url), 'utf8');
 const unlockJs = ts.transpile(unlockSource, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext });
 const unlockRoute = await import('data:text/javascript;base64,' + Buffer.from(unlockJs).toString('base64'));

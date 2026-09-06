@@ -4,6 +4,12 @@ import { createConversationStore, language, Pair, RecordGesture, RecordMode, Spe
 import { VoiceRecorder } from '@/lib/voice-recorder';
 
 type Job = { audio?: Blob; text?: string; pair: Pair; replaceId?: number; speaker: Speaker; autoSpeakSide?: 0 | 1 };
+type UsageTotals = { month: string; monthTokens: number; monthCost: number; totalTokens: number; totalCost: number };
+const currentMonth = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+};
+const emptyUsageTotals = (): UsageTotals => ({ month: currentMonth(), monthTokens: 0, monthCost: 0, totalTokens: 0, totalCost: 0 });
 export function useTranslator() {
   const [pair, setPair] = useState<Pair>(['en', 'zh-CN']);
   const [selfOnTop, setSelfOnTop] = useState(false);
@@ -15,6 +21,7 @@ export function useTranslator() {
   const history = useSyncExternalStore(conversation.subscribe, conversation.snapshot, conversation.snapshot);
   const [credential, setCredential] = useState('');
   const [usage, setUsage] = useState({ tokens: 0, cost: 0 });
+  const [usageTotals, setUsageTotals] = useState<UsageTotals>(emptyUsageTotals);
   const [multiplier, setMultiplier] = useState(1);
   const [needsSettings, setNeedsSettings] = useState(false);
   const [failed, setFailed] = useState<Job>();
@@ -32,6 +39,20 @@ export function useTranslator() {
   const pointerOwner = useRef<number | undefined>(undefined);
   const pumping = useRef(false), mounted = useRef(true);
   const pumpRef = useRef<() => void>(() => {});
+
+  const addUsage = useCallback((tokens: number, cost: number) => {
+    const safeTokens = Number.isFinite(tokens) ? Math.max(0, Math.round(tokens)) : 0;
+    const safeCost = Number.isFinite(cost) ? Math.max(0, cost) : 0;
+    if (!safeTokens && !safeCost) return;
+    setUsage(current => ({ tokens: current.tokens + safeTokens, cost: current.cost + safeCost }));
+    setUsageTotals(current => {
+      const month = currentMonth();
+      const base = current.month === month ? current : { ...current, month, monthTokens: 0, monthCost: 0 };
+      const next = { ...base, monthTokens: base.monthTokens + safeTokens, monthCost: base.monthCost + safeCost, totalTokens: base.totalTokens + safeTokens, totalCost: base.totalCost + safeCost };
+      try { localStorage.setItem('lucky-usage-totals', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
 
   const sync = () => { setMode(gesture.current.mode); };
   const stop = useCallback(async (commit = true) => {
@@ -66,7 +87,7 @@ export function useTranslator() {
         if (typeof data.upper !== 'string' || typeof data.lower !== 'string' || typeof data.original !== 'string') throw new Error('没有收到完整译文，请重试');
         const result: Translation = { upper: data.upper, lower: data.lower, original: data.original, pair: job.pair, id: Date.now(), speaker: job.speaker };
         const received = data.usage && typeof data.usage === 'object' ? data.usage as Record<string, unknown> : {};
-        setUsage(current => ({ tokens: current.tokens + (typeof received.tokens === 'number' && Number.isFinite(received.tokens) ? Math.max(0, received.tokens) : 0), cost: current.cost + (typeof received.cost === 'number' && Number.isFinite(received.cost) ? Math.max(0, received.cost) : 0) }));
+        addUsage(typeof received.tokens === 'number' ? received.tokens : 0, typeof received.cost === 'number' ? received.cost : 0);
         if (job.replaceId !== undefined) conversation.replace(job.replaceId, { ...result, id: job.replaceId }); else conversation.append(result);
         if (job.autoSpeakSide !== undefined) {
           const side = job.autoSpeakSide;
@@ -86,7 +107,7 @@ export function useTranslator() {
         if (token !== generation.current || !mounted.current) return;
         pumping.current = false; controller.current = undefined; setPending(queue.current.length); pumpRef.current();
       });
-  }, [stop, conversation]);
+  }, [stop, conversation, addUsage]);
   useEffect(() => { pumpRef.current = pump; }, [pump]);
   const enqueue = useCallback((job: Job) => {
     if (queue.current.length >= 4) { setError('翻译暂时跟不上，已停止录音；最后一句未发送，请稍后重说'); void stop(false); return; }
@@ -147,6 +168,10 @@ export function useTranslator() {
         if (savedKey && savedKey.length <= 512 && !/[\r\n]/.test(savedKey)) setCredential(savedKey);
         const savedMultiplier = Number(localStorage.getItem('lucky-price-multiplier'));
         if (Number.isFinite(savedMultiplier) && savedMultiplier >= .1 && savedMultiplier <= 100) setMultiplier(savedMultiplier);
+        const savedUsage = JSON.parse(localStorage.getItem('lucky-usage-totals') || 'null') as Partial<UsageTotals> | null;
+        if (savedUsage && [savedUsage.monthTokens, savedUsage.monthCost, savedUsage.totalTokens, savedUsage.totalCost].every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0)) {
+          const month = currentMonth(); setUsageTotals({ month, monthTokens: savedUsage.month === month ? savedUsage.monthTokens! : 0, monthCost: savedUsage.month === month ? savedUsage.monthCost! : 0, totalTokens: savedUsage.totalTokens!, totalCost: savedUsage.totalCost! });
+        }
       } catch {}
     });
     const leave = () => { cancel(); setNotice('已暂停，长按或双击可继续'); };
@@ -161,7 +186,7 @@ export function useTranslator() {
     try { localStorage.setItem('lucky-preferences', JSON.stringify({ pair: value, selfOnTop })); } catch {}
   };
   return {
-    pair, selfOnTop, changePair, mode, phase, level, pending, error, notice, history, credential, usage, multiplier, autoSpeech,
+    pair, selfOnTop, changePair, mode, phase, level, pending, error, notice, history, credential, usage, usageTotals, multiplier, autoSpeech, addUsage,
     setMultiplier: (value: number) => { if (!Number.isFinite(value) || value < .1 || value > 100) return; setMultiplier(value); try { localStorage.setItem('lucky-price-multiplier', String(value)); } catch {} },
     swapSides: () => {
       if (mode !== 'idle' || pending || phase !== 'ready') return false;
