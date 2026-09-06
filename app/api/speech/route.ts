@@ -5,7 +5,7 @@ import { requireAccount } from '@/lib/server/auth';
 import { json, readJson, sameOrigin } from '@/lib/server/http';
 import { LANGUAGES } from '@/lib/translation';
 
-const languageCode = (code: string) => ({ 'zh-CN': 'zh', 'zh-TW': 'zh', ja: 'jp', ko: 'kr', pt: 'pt-br' } as Record<string, string>)[code] || code.split('-')[0];
+const languageCode = (code: string) => ({ 'zh-CN': 'ZH', 'zh-TW': 'ZH', ja: 'jp', ko: 'kr', pt: 'pt-br' } as Record<string, string>)[code] || code.split('-')[0];
 
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return json({ error: '请从当前页面播放语音' }, 403);

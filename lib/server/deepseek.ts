@@ -4,7 +4,7 @@ import { getDeepSeekKey } from './config';
 
 export type DeepSeekMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
-export async function deepSeekJson(account: Account, feature: string, messages: DeepSeekMessage[], signal: AbortSignal, maxTokens = 3000) {
+export async function deepSeekJson(account: Account, feature: string, messages: DeepSeekMessage[], signal: AbortSignal, maxTokens = 3000, tokenMultiplier = 1) {
   await enforceLimits(account); const key = await getDeepSeekKey();
   const response = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST', redirect: 'manual', signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]),
@@ -19,6 +19,6 @@ export async function deepSeekJson(account: Account, feature: string, messages: 
   const result = await response.json() as { choices?: Array<{ finish_reason?: string; message?: { content?: string } }>; usage?: Parameters<typeof recordDeepSeekUsage>[2] };
   const content = result.choices?.[0]?.message?.content;
   if (!content) throw Object.assign(new Error('没有收到完整内容，请重试'), { status: 502 });
-  const usage = await recordDeepSeekUsage(account, feature, result.usage);
+  const usage = await recordDeepSeekUsage(account, feature, result.usage, tokenMultiplier);
   return { content, usage };
 }

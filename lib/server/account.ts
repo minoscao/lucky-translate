@@ -45,19 +45,19 @@ export async function addActiveSeconds(account: Account, seconds: number, catego
 }
 
 export type TokenUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_cache_hit_tokens?: number };
-export async function recordDeepSeekUsage(account: Account, feature: string, usage?: TokenUsage) {
+export async function recordDeepSeekUsage(account: Account, feature: string, usage?: TokenUsage, tokenMultiplier = 1) {
   const { day, hour } = periodKeys(), peak = (hour >= 9 && hour < 12) || (hour >= 14 && hour < 18);
   const input = Math.max(0, usage?.prompt_tokens || 0), output = Math.max(0, usage?.completion_tokens || 0), cached = Math.min(input, Math.max(0, usage?.prompt_cache_hit_tokens || 0));
   const rates = peak ? { period: 'peak', cached: .014, input: .44, output: 1.32 } : { period: 'off_peak', cached: .007, input: .22, output: .66 };
-  const tokens = usage?.total_tokens || input + output, cost = ((input - cached) * rates.input + cached * rates.cached + output * rates.output) / 1_000_000;
+  const tokens = usage?.total_tokens || input + output, multiplier = tokenMultiplier >= 2 ? 2 : 1, chargedTokens = Math.ceil(tokens * multiplier), cost = ((input - cached) * rates.input + cached * rates.cached + output * rates.output) / 1_000_000;
   const costMicros = Math.max(0, Math.round(cost * 1_000_000)), now = Date.now();
   await getDb().batch([
     getDb().prepare(`INSERT INTO usage_events (id, user_id, feature, provider, model, input_tokens, cached_tokens, output_tokens, total_tokens, cost_micros, price_snapshot, created_at)
-      VALUES (?1, ?2, ?3, 'deepseek', 'deepseek-v4-flash', ?4, ?5, ?6, ?7, ?8, ?9, ?10)`).bind(crypto.randomUUID(), account.id, feature, input, cached, output, tokens, costMicros, JSON.stringify(rates), now),
+      VALUES (?1, ?2, ?3, 'deepseek', 'deepseek-v4-flash', ?4, ?5, ?6, ?7, ?8, ?9, ?10)`).bind(crypto.randomUUID(), account.id, feature, input, cached, output, chargedTokens, costMicros, JSON.stringify({ ...rates, actualTokens: tokens, tokenMultiplier: multiplier }), now),
     getDb().prepare(`INSERT INTO usage_daily (user_id, day, tokens, cost_micros, active_seconds, training_seconds, translation_seconds, updated_at) VALUES (?1, ?2, ?3, ?4, 0, 0, 0, ?5)
-      ON CONFLICT(user_id, day) DO UPDATE SET tokens = tokens + excluded.tokens, cost_micros = cost_micros + excluded.cost_micros, updated_at = excluded.updated_at`).bind(account.id, day, tokens, costMicros, now),
+      ON CONFLICT(user_id, day) DO UPDATE SET tokens = tokens + excluded.tokens, cost_micros = cost_micros + excluded.cost_micros, updated_at = excluded.updated_at`).bind(account.id, day, chargedTokens, costMicros, now),
   ]);
-  return { tokens, cost, inputTokens: input, cachedTokens: cached, outputTokens: output, period: rates.period };
+  return { tokens: chargedTokens, actualTokens: tokens, tokenMultiplier: multiplier, cost, inputTokens: input, cachedTokens: cached, outputTokens: output, period: rates.period };
 }
 
 export async function recordServiceCost(account: Account, feature: string, provider: string, model: string, cost: number, priceSnapshot: object) {

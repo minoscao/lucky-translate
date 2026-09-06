@@ -39,12 +39,12 @@ const memorySchema = {
   },
 };
 
-async function coachRequest<T>(_key: string, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, _schemaName: string, _schema: object, signal: AbortSignal): Promise<{ data: T; usage: CoachUsage }> {
+async function coachRequest<T>(_key: string, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, _schemaName: string, _schema: object, signal: AbortSignal, voiceMode = false): Promise<{ data: T; usage: CoachUsage }> {
   let response: Response;
   try {
     response = await fetch('/api/coach', {
       method: 'POST', credentials: 'same-origin', signal, headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages, maxTokens: 1800 }),
+      body: JSON.stringify({ messages, maxTokens: 1800, voiceMode }),
     });
   } catch { throw new Error('无法连接 English Coach，请检查网络'); }
   if (!response.ok) {
@@ -58,7 +58,7 @@ async function coachRequest<T>(_key: string, messages: Array<{ role: 'system' | 
   catch { throw new Error('English Coach 返回内容不完整，请重试'); }
 }
 
-export async function coachReplyDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; turnStatus: string; newSession?: boolean; signal: AbortSignal }) {
+export async function coachReplyDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; turnStatus: string; newSession?: boolean; voiceMode?: boolean; signal: AbortSignal }) {
   const schema = {
     type: 'object', additionalProperties: false, required: ['reply', 'tip', 'memory'],
     properties: { reply: { type: 'string' }, tip: { type: 'string' }, memory: memorySchema },
@@ -67,7 +67,7 @@ export async function coachReplyDirect(input: { key: string; history: CoachMessa
   const task = input.newSession
     ? `Start a fresh ordinary open conversation. Do not announce a level or lesson. Learner memory: ${JSON.stringify(input.memory)}`
     : `Private learner memory: ${JSON.stringify(input.memory)}\nLearner-turn signal: ${input.turnStatus}. Respond to the learner's latest message.`;
-  return coachRequest<{ reply: string; tip: string; memory: CoachMemory }>(input.key, [{ role: 'system', content: DEFAULT_COACH_SKILL }, ...history, { role: 'user', content: task }], 'lucky_coach_turn', schema, input.signal);
+  return coachRequest<{ reply: string; tip: string; memory: CoachMemory }>(input.key, [{ role: 'system', content: DEFAULT_COACH_SKILL }, ...history, { role: 'user', content: task }], 'lucky_coach_turn', schema, input.signal, input.voiceMode);
 }
 
 export async function coachPracticeDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; signal: AbortSignal }) {

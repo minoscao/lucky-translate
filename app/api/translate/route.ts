@@ -50,7 +50,7 @@ export async function POST(request: Request) {
     }
     if (typeof original !== 'string' || !original.trim()) return json({ empty: true, usage: { tokens: 0, cost: speechCost } });
     const source = original.trim();
-    const result = await deepSeekJson(account, '翻译', [{ role: 'system', content: interpreterPrompt(upper.name, lower.name) }, { role: 'user', content: JSON.stringify({ previous_utterances: context, current_utterance: source }) }], request.signal);
+    const result = await deepSeekJson(account, '翻译', [{ role: 'system', content: interpreterPrompt(upper.name, lower.name) }, { role: 'user', content: JSON.stringify({ previous_utterances: context, current_utterance: source }) }], request.signal, 3000, audio instanceof File ? 2 : 1);
     let translated: { upper?: unknown; lower?: unknown }; try { translated = JSON.parse(result.content); } catch { return json({ error: '没有收到完整译文，请重试' }, 502); }
     if (typeof translated.upper !== 'string' || typeof translated.lower !== 'string' || !translated.upper.trim() || !translated.lower.trim()) return json({ error: '没有收到完整译文，请重试' }, 502);
     return json({ original: source, upper: translated.upper.trim(), lower: translated.lower.trim(), model: 'deepseek-v4-flash', usage: { tokens: result.usage.tokens, cost: Number((result.usage.cost + speechCost).toFixed(12)) } });

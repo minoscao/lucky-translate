@@ -105,7 +105,7 @@ export function useCoach(_serviceKey: string, addUsage: UsageHandler, active = f
   const requestReply = useCallback(async (messages: CoachMessage[], nextMemory: CoachMemory, turnStatus: string, newSession = false) => {
     abort.current?.abort(); const controller = new AbortController(); abort.current = controller; setBusyState(true); setError(''); setTip('');
     try {
-      const result = await coachReplyDirect({ key: keyRef.current, history: messages, memory: nextMemory, turnStatus, newSession, signal: controller.signal });
+      const result = await coachReplyDirect({ key: keyRef.current, history: messages, memory: nextMemory, turnStatus, newSession, voiceMode: true, signal: controller.signal });
       const reply = result.data.reply.trim(); if (!reply) throw new Error('English Coach 没有返回回复');
       const updatedMemory = cleanMemory(result.data.memory), updated = [...messages, { id: ++messageId.current, role: 'coach' as const, text: reply }];
       updateHistory(updated); updateMemory(updatedMemory); setTip(result.data.tip.trim()); saveSession(updated, updatedMemory); usageRef.current(result.usage.tokens, result.usage.cost);

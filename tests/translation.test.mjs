@@ -107,12 +107,25 @@ test('managed service architecture keeps API keys on the server and uses the con
   assert.match(transcribe, /audioToBase64\(bytes\)/);
   assert.match(audio, /return btoa\(parts\.join\(''\)\)/);
   assert.match(speech, /@cf\/myshell-ai\/melotts/);
+  assert.match(speech, /audio\/wav/);
+  assert.match(speech, /'zh-CN': 'ZH'/);
 });
 
 test('translation and coaching time are charged in full while summaries are charged at ten percent', async () => {
   const account = await readFile(new URL('../lib/server/account.ts', import.meta.url), 'utf8');
   assert.match(account, /category === 'summary' \? Math\.ceil\(safe \* \.1\) : safe/);
   assert.match(account, /category === 'training' \? safe : 0/);
+});
+test('voice interactions use two times the customer Token allowance while preserving the actual model cost', async () => {
+  const [account, translate, coach] = await Promise.all([
+    readFile(new URL('../lib/server/account.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../app/api/translate/route.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../app/api/coach/route.ts', import.meta.url), 'utf8'),
+  ]);
+  assert.match(account, /chargedTokens = Math\.ceil\(tokens \* multiplier\)/);
+  assert.match(account, /actualTokens: tokens, tokenMultiplier: multiplier/);
+  assert.match(translate, /audio instanceof File \? 2 : 1/);
+  assert.match(coach, /body\.voiceMode === true \? 2 : 1/);
 });
 test('coach recalls do not turn possible speech-recognition noise into corrections', async () => {
   const coach = await readFile(new URL('../lib/coach.ts', import.meta.url), 'utf8');
