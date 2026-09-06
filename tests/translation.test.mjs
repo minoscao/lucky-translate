@@ -231,8 +231,8 @@ const voiceJs = ts.transpile(voiceSource, { target: ts.ScriptTarget.ES2022, modu
 const voiceRoute = await import('data:text/javascript;base64,' + Buffer.from(voiceJs).toString('base64'));
 function voiceRequest(key = 'test-only-not-a-real-key') {
   const data = new FormData(); data.set('name', 'Mia voice');
-  data.set('consent', new File([new Uint8Array([1, 2, 3])], 'consent.webm', { type: 'audio/webm' }));
-  data.set('sample', new File([new Uint8Array([4, 5, 6])], 'sample.webm', { type: 'audio/webm' }));
+  data.set('consent', new File([new Uint8Array([1, 2, 3])], 'consent.webm', { type: 'audio/webm;codecs=opus' }));
+  data.set('sample', new File([new Uint8Array([4, 5, 6])], 'sample.webm', { type: 'audio/webm;codecs=opus' }));
   return new Request('https://translator.test/api/voice', { method: 'POST', headers: { Origin: 'https://translator.test', 'x-translation-key': key }, body: data });
 }
 test('voice setup uploads consent before the sample and returns the custom voice id', async () => {
@@ -247,7 +247,7 @@ test('voice setup uploads consent before the sample and returns the custom voice
     const response = await voiceRoute.POST(voiceRequest());
     assert.equal(response.status, 200); assert.deepEqual(await response.json(), { voiceId: 'voice_123' });
     assert.equal(calls.length, 2); assert.equal(calls[0].options.headers.Authorization, 'Bearer test-only-not-a-real-key');
-    assert.equal(calls[0].options.body.get('language'), 'zh'); assert.equal(calls[1].options.body.get('consent'), 'consent_123');
+    assert.equal(calls[0].options.body.get('language'), 'en'); assert.equal(calls[1].options.body.get('consent'), 'consent_123');
   } finally { globalThis.fetch = oldFetch; }
 });
 

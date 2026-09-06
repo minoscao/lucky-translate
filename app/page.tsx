@@ -299,8 +299,8 @@ export default function Home() {
         {formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={t.pending > 0}>翻译</Button>
       </form>}
       {visibleDialog === 'voice' && <form onSubmit={createVoice}>
-        <AudioSampleRecorder label="1 · 录制授权声明" prompt="请逐字朗读：我是此声音的拥有者并授权OpenAI使用此声音创建语音合成模型" value={consentAudio} onChange={setConsentAudio} />
-        <AudioSampleRecorder label="2 · 录制声音样本" prompt={'请用平时说话的语气，完整朗读下面这段范文（约 15 秒）：\n\n“你好，很高兴认识你。今天阳光很好，我想和你分享一段旅途中的小故事。无论我们说着哪一种语言，希望这段声音都能清楚、自然地传达我的意思。”'} value={sampleAudio} onChange={setSampleAudio} />
+        <AudioSampleRecorder label="1 · 录制英文授权声明" prompt="请逐字朗读：I am the owner of this voice and I consent to OpenAI using this voice to create a synthetic voice model." value={consentAudio} onChange={audio => { setConsentAudio(audio); setFormError(''); }} />
+        <AudioSampleRecorder label="2 · 录制英文声音样本" prompt={'请用平时说英文的语气，完整朗读下面这段范文（约 15 秒）：\n\n“Hello, it’s great to meet you. Today feels like a wonderful day to explore something new. Wherever this conversation takes us, I want my voice to sound clear, natural, friendly, and confident.”'} value={sampleAudio} onChange={audio => { setSampleAudio(audio); setFormError(''); }} />
         <p className="field-note">自定义声音只对部分 OpenAI 账户开放。所有播放声音均由 AI 生成。</p>
         {formError && <p role="alert" className="form-error">{formError}</p>}
         <Button type="submit" className="form-submit" disabled={!consentAudio || !sampleAudio || voiceCreating}>{voiceCreating ? <><LoaderCircle className="spinning" />正在创建声音</> : '创建并使用我的声音'}</Button>

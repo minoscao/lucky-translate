@@ -28,9 +28,11 @@ export async function POST(request: Request) {
     const bytes = new Uint8Array(length); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
     const form = await new Response(bytes, { headers: { 'Content-Type': request.headers.get('content-type') || '' } }).formData();
     const consent = form.get('consent'), sample = form.get('sample'), rawName = form.get('name'), name = typeof rawName === 'string' ? rawName.trim().slice(0, 64) : '';
-    if (!(consent instanceof File) || !(sample instanceof File) || !name || !consent.size || !sample.size || consent.size > 10 * 1024 * 1024 || sample.size > 10 * 1024 * 1024 || !ALLOWED_AUDIO.includes(consent.type) || !ALLOWED_AUDIO.includes(sample.type)) return reply({ error: '请重新录制两段有效声音' }, 400);
+    const consentType = consent instanceof File ? consent.type.toLowerCase().split(';', 1)[0] : '';
+    const sampleType = sample instanceof File ? sample.type.toLowerCase().split(';', 1)[0] : '';
+    if (!(consent instanceof File) || !(sample instanceof File) || !name || !consent.size || !sample.size || consent.size > 10 * 1024 * 1024 || sample.size > 10 * 1024 * 1024 || !ALLOWED_AUDIO.includes(consentType) || !ALLOWED_AUDIO.includes(sampleType)) return reply({ error: '请重新录制两段有效声音' }, 400);
     const signal = AbortSignal.any([request.signal, AbortSignal.timeout(90000)]);
-    const consentForm = new FormData(); consentForm.set('name', `${name} consent`); consentForm.set('language', 'zh'); consentForm.set('recording', consent, `consent.${consent.type.includes('mp4') ? 'mp4' : 'webm'}`);
+    const consentForm = new FormData(); consentForm.set('name', `${name} consent`); consentForm.set('language', 'en'); consentForm.set('recording', consent, `consent.${consent.type.includes('mp4') ? 'mp4' : 'webm'}`);
     consentId = await upload('/audio/voice_consents', consentForm, key, signal);
     const voiceForm = new FormData(); voiceForm.set('name', name); voiceForm.set('consent', consentId); voiceForm.set('audio_sample', sample, `sample.${sample.type.includes('mp4') ? 'mp4' : 'webm'}`);
     const voiceId = await upload('/audio/voices', voiceForm, key, signal);
