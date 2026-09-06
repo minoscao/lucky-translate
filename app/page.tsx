@@ -42,11 +42,11 @@ function RecordButton({ controller: t, side, onBeforeRecord }: { controller: Ret
 
 type PanelProps = {
   controller: ReturnType<typeof useTranslator>; onHistory: () => void;
-  totals: { monthTokens: number; monthCost: number; totalTokens: number; totalCost: number }; multiplier: number;
+  totals: { dayTokens: number; dayCost: number; monthTokens: number; monthCost: number; totalTokens: number; totalCost: number }; multiplier: number;
   side: 0 | 1; isSelf: boolean; ownName: string; pair: Pair; entries: { id: number; text: string; speaker: 'self' | 'other' }[]; locked: boolean; canSpeak: boolean;
-  onLanguage: (pair: Pair) => void; onType: () => void; onEdit: (id: number, text: string) => void; onSpeak: () => void; onCopy: () => void; onBeforeRecord: () => void;
+  onLanguage: (pair: Pair) => void; onType: () => void; onEdit: (id: number, text: string) => void; onSpeak: () => void; onCopy: () => void; onBeforeRecord: () => void; onUsage: () => void;
 };
-function LanguagePanel({ controller, onHistory, totals, multiplier, side, isSelf, ownName, pair, entries, locked, canSpeak, onLanguage, onType, onEdit, onSpeak, onCopy, onBeforeRecord }: PanelProps) {
+function LanguagePanel({ controller, onHistory, totals, multiplier, side, isSelf, ownName, pair, entries, locked, canSpeak, onLanguage, onType, onEdit, onSpeak, onCopy, onBeforeRecord, onUsage }: PanelProps) {
   const viewport = useRef<HTMLElement>(null), following = useRef(true), previousLanguage = useRef(pair[side]);
   const [bounds, setBounds] = useState({ top: true, bottom: true });
   const text = entries.at(-1)?.text;
@@ -75,7 +75,7 @@ function LanguagePanel({ controller, onHistory, totals, multiplier, side, isSelf
   return <section className={`language-panel ${isSelf ? 'self' : 'partner'} ${side === 0 ? 'facing-away' : ''}`} style={{ gridRow: side === 0 ? 1 : 3 }} aria-label={isSelf ? '你的翻译区' : '对方的翻译区'}>
     <header className="panel-head">
       <span className="side-label"><span className="side-dot" />{isSelf ? ownName : 'other speaks'}{isSelf && <Button variant="ghost" className="history-entry" onClick={onHistory} aria-label="查看完整对话"><History /><span>完整对话</span></Button>}</span>
-      {isSelf && <output className="usage-meter" aria-label={`本月 ${totals.monthTokens} tokens，显示金额 ${(totals.monthCost * multiplier).toFixed(2)} 美元；本设备累计 ${totals.totalTokens} tokens，显示金额 ${(totals.totalCost * multiplier).toFixed(2)} 美元；倍率 ${multiplier}`}><span><small>本月</small><strong>${(totals.monthCost * multiplier).toFixed(2)}</strong><em>{totals.monthTokens.toLocaleString()} tokens</em></span><span><small>累计</small><strong>${(totals.totalCost * multiplier).toFixed(2)}</strong><em>{totals.totalTokens.toLocaleString()} tokens</em></span><b>×{multiplier.toFixed(1)}</b></output>}
+      {isSelf && <button type="button" className="usage-meter" onClick={onUsage} aria-label={`今日费用 ${(totals.dayCost * multiplier).toFixed(2)} 美元，点击查看使用明细`}><small>今日</small><strong>${(totals.dayCost * multiplier).toFixed(2)}</strong></button>}
       <Select value={pair[side]} onValueChange={value => { if (value && language(value)) onLanguage(selectLanguage(pair, side, value as LanguageCode)); }} disabled={locked}>
         <SelectTrigger className="language-button" aria-label={isSelf ? '你的语言' : '对方的语言'}><SelectValue>{language(pair[side])?.label}</SelectValue></SelectTrigger>
         <SelectContent className={`language-options ${side === 0 ? 'upside-down' : ''}`} alignItemWithTrigger={false}>
@@ -108,7 +108,7 @@ export default function Home() {
   const [access, setAccess] = useState<'checking' | 'locked' | 'unlocked'>('checking');
   const [accessPassword, setAccessPassword] = useState(''), [accessError, setAccessError] = useState('');
   const [unlocking, setUnlocking] = useState(false);
-  const [dialog, setDialog] = useState<'settings' | 'help' | 'history' | 'text' | 'edit' | 'name' | 'voice' | null>(null);
+  const [dialog, setDialog] = useState<'settings' | 'help' | 'history' | 'text' | 'edit' | 'name' | 'voice' | 'usage' | null>(null);
   const [dialogSide, setDialogSide] = useState<0 | 1>(1);
   const [draftKey, setDraftKey] = useState(''), [draftText, setDraftText] = useState(''), [draftMultiplier, setDraftMultiplier] = useState('1.0');
   const [formError, setFormError] = useState(''), [copied, setCopied] = useState(false);
@@ -248,6 +248,11 @@ export default function Home() {
     if (result.outcome === 'accepted') setInstallEvent(undefined);
   };
   const status = t.error || (t.phase === 'permission' ? '请允许使用麦克风…' : t.phase === 'listening' ? (t.pending ? '正在聆听 · 译文即将出现' : '正在聆听，双方都可以说话') : t.phase === 'stopping' ? '正在结束录音…' : t.pending ? `正在翻译${t.pending > 1 ? ` · ${t.pending} 句` : ''}` : t.notice);
+  const usageRows = [
+    { label: '今日', tokens: t.usageTotals.dayTokens, cost: t.usageTotals.dayCost },
+    { label: '本月', tokens: t.usageTotals.monthTokens, cost: t.usageTotals.monthCost },
+    { label: '累计', tokens: t.usageTotals.totalTokens, cost: t.usageTotals.totalCost },
+  ];
   if (access !== 'unlocked') return <main className="access-page"><section className="access-card" aria-busy={access === 'checking'}>
     <div className="access-mark"><ShieldCheck /></div><h1>Lucky 同声翻译</h1>
     {access === 'checking' ? <p><LoaderCircle className="spinning" />正在检查访问权限…</p> : <form onSubmit={unlock}>
@@ -258,7 +263,7 @@ export default function Home() {
     </form>}
   </section></main>;
   return <main className="translator"><div className="app-frame">
-    {([0, 1] as const).map(side => <LanguagePanel key={side} controller={t} onHistory={() => open('history')} totals={t.usageTotals} multiplier={t.multiplier} side={side} isSelf={t.selfOnTop ? side === 0 : side === 1} ownName={ownName} pair={t.pair} entries={panelEntries[side]} locked={locked} canSpeak={Boolean(t.credential)} onLanguage={t.changePair} onType={() => { setDraftText(''); open('text', side); }} onEdit={(id, text) => editSentence(side, id, text)} onSpeak={() => speak(side)} onCopy={() => void copy(side)} onBeforeRecord={stopSpeech} />)}
+    {([0, 1] as const).map(side => <LanguagePanel key={side} controller={t} onHistory={() => open('history')} totals={t.usageTotals} multiplier={t.multiplier} side={side} isSelf={t.selfOnTop ? side === 0 : side === 1} ownName={ownName} pair={t.pair} entries={panelEntries[side]} locked={locked} canSpeak={Boolean(t.credential)} onLanguage={t.changePair} onType={() => { setDraftText(''); open('text', side); }} onEdit={(id, text) => editSentence(side, id, text)} onSpeak={() => speak(side)} onCopy={() => void copy(side)} onBeforeRecord={stopSpeech} onUsage={() => open('usage', side)} />)}
     <section className="control-deck" aria-label="录音控制">
       <div className="deck-top"><Button variant="outline" className="side-swap" onClick={() => t.swapSides()} disabled={locked} aria-label="上下切换双方位置" title="上下切换"><ArrowDownUp /><span>切换</span></Button><h1 className="wordmark">LUCKY<span>同声翻译</span></h1><div className="deck-actions">
         <Button variant="ghost" onClick={() => open('history')} aria-label="对话记录" title="对话记录"><History /></Button>
@@ -275,9 +280,9 @@ export default function Home() {
     {speaking && <Button variant="secondary" className="speech-stop" onClick={stopSpeech}><Square />停止朗读</Button>}
   </div>
   <Dialog open={visibleDialog !== null} onOpenChange={value => { if (!value) { if (visibleDialog === 'name') saveName(ownName); else if (visibleDialog === 'voice') chooseDefaultVoice(); else setDialog(null); t.setNeedsSettings(false); } }}>
-    <DialogContent className={`app-dialog ${visibleDialog === 'history' ? 'conversation-dialog' : ''} ${visibleDialog === 'edit' ? 'edit-dialog' : ''} ${visibleDialog === 'voice' ? 'voice-dialog' : ''} ${dialogSide === 0 && !t.needsSettings && !['history', 'edit', 'voice'].includes(visibleDialog || '') ? 'upside-down' : ''}`} showCloseButton={false}>
-      <DialogHeader><DialogTitle>{visibleDialog === 'name' ? '怎么称呼你？' : visibleDialog === 'settings' ? '连接翻译服务' : visibleDialog === 'history' ? '完整对话' : visibleDialog === 'edit' ? '修改当前这句' : visibleDialog === 'text' ? '输入文字' : visibleDialog === 'voice' ? '用我的声音朗读' : '随时打开，面对面聊'}</DialogTitle><DialogDescription>
-        {visibleDialog === 'name' ? 'What should we call you?' : visibleDialog === 'settings' ? '使用你自己的服务密钥开启语音识别和翻译。' : visibleDialog === 'history' ? (locked ? '正在整理最后的对话…' : `${t.history.length} 句 · 仅保留在本次页面中`) : visibleDialog === 'edit' ? `按${language(t.pair[dialogSide])?.label}修改，保存后更新双方译文。` : visibleDialog === 'text' ? '任意语言都可以，会同时转换成双方的语言。' : visibleDialog === 'voice' ? '可选设置。录音仅用于在你的 OpenAI 账户中创建声音。' : '添加到手机主屏幕，像应用一样打开。'}
+    <DialogContent className={`app-dialog ${visibleDialog === 'history' ? 'conversation-dialog' : ''} ${visibleDialog === 'edit' ? 'edit-dialog' : ''} ${visibleDialog === 'voice' ? 'voice-dialog' : ''} ${dialogSide === 0 && !t.needsSettings && !['history', 'edit', 'voice', 'usage'].includes(visibleDialog || '') ? 'upside-down' : ''}`} showCloseButton={false}>
+      <DialogHeader><DialogTitle>{visibleDialog === 'name' ? '怎么称呼你？' : visibleDialog === 'settings' ? '连接翻译服务' : visibleDialog === 'history' ? '完整对话' : visibleDialog === 'edit' ? '修改当前这句' : visibleDialog === 'text' ? '输入文字' : visibleDialog === 'voice' ? '用我的声音朗读' : visibleDialog === 'usage' ? '使用明细' : '随时打开，面对面聊'}</DialogTitle><DialogDescription>
+        {visibleDialog === 'name' ? 'What should we call you?' : visibleDialog === 'settings' ? '使用你自己的服务密钥开启语音识别和翻译。' : visibleDialog === 'history' ? (locked ? '正在整理最后的对话…' : `${t.history.length} 句 · 仅保留在本次页面中`) : visibleDialog === 'edit' ? `按${language(t.pair[dialogSide])?.label}修改，保存后更新双方译文。` : visibleDialog === 'text' ? '任意语言都可以，会同时转换成双方的语言。' : visibleDialog === 'voice' ? '可选设置。录音仅用于在你的 OpenAI 账户中创建声音。' : visibleDialog === 'usage' ? '此设备通过 Lucky 产生的用量。' : '添加到手机主屏幕，像应用一样打开。'}
       </DialogDescription></DialogHeader>
       <DialogClose render={<Button variant="ghost" className="dialog-close" aria-label="关闭" />}><X /></DialogClose>
       {visibleDialog === 'name' && <form onSubmit={event => { event.preventDefault(); saveName(draftName); }}><label htmlFor="display-name" className="field-label">你的名字 / Your name</label><Input id="display-name" className="app-input" value={draftName} onChange={event => setDraftName(event.target.value)} placeholder="Me" maxLength={24} autoComplete="nickname" /><p className="field-note">只保存在这台设备，下次自动使用。</p><Button type="submit" className="form-submit">{draftName.trim() ? '记住名字，开始对话' : '使用 Me，开始对话'}</Button></form>}
@@ -306,6 +311,7 @@ export default function Home() {
         <Button type="submit" className="form-submit" disabled={!consentAudio || !sampleAudio || voiceCreating}>{voiceCreating ? <><LoaderCircle className="spinning" />正在创建声音</> : '创建并使用我的声音'}</Button>
         <Button type="button" variant="ghost" className="default-voice" onClick={chooseDefaultVoice}>暂时使用内置声音</Button>
       </form>}
+      {visibleDialog === 'usage' && <div className="usage-details">{usageRows.map(item => <article key={item.label}><span>{item.label}</span><strong>${(item.cost * t.multiplier).toFixed(2)}</strong><small>{item.tokens.toLocaleString()} tokens · 实际 ${item.cost.toFixed(2)}</small></article>)}<p>当前显示倍率 <strong>×{t.multiplier.toFixed(1)}</strong></p></div>}
       {visibleDialog === 'edit' && <form className="edit-form" onSubmit={event => { event.preventDefault(); if (!draftText.trim() || editingId === undefined) { setFormError('这句话不能为空'); return; } if (t.retranslate(editingId, draftText.trim())) { setDialog(null); setEditingId(undefined); } }}>
         <label className="field-label" htmlFor="edited-text">当前这句话</label><Textarea id="edited-text" className="app-input edit-input" value={draftText} maxLength={2000} onChange={event => setDraftText(event.target.value)} dir="auto" lang={t.pair[dialogSide]} />
         {formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={t.pending > 0}>保存并重新翻译</Button>

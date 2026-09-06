@@ -4,12 +4,16 @@ import { createConversationStore, language, Pair, RecordGesture, RecordMode, Spe
 import { VoiceRecorder } from '@/lib/voice-recorder';
 
 type Job = { audio?: Blob; text?: string; pair: Pair; replaceId?: number; speaker: Speaker; autoSpeakSide?: 0 | 1 };
-type UsageTotals = { month: string; monthTokens: number; monthCost: number; totalTokens: number; totalCost: number };
+type UsageTotals = { day: string; dayTokens: number; dayCost: number; month: string; monthTokens: number; monthCost: number; totalTokens: number; totalCost: number };
+const currentDay = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+};
 const currentMonth = () => {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 };
-const emptyUsageTotals = (): UsageTotals => ({ month: currentMonth(), monthTokens: 0, monthCost: 0, totalTokens: 0, totalCost: 0 });
+const emptyUsageTotals = (): UsageTotals => ({ day: currentDay(), dayTokens: 0, dayCost: 0, month: currentMonth(), monthTokens: 0, monthCost: 0, totalTokens: 0, totalCost: 0 });
 export function useTranslator() {
   const [pair, setPair] = useState<Pair>(['en', 'zh-CN']);
   const [selfOnTop, setSelfOnTop] = useState(false);
@@ -46,9 +50,15 @@ export function useTranslator() {
     if (!safeTokens && !safeCost) return;
     setUsage(current => ({ tokens: current.tokens + safeTokens, cost: current.cost + safeCost }));
     setUsageTotals(current => {
-      const month = currentMonth();
-      const base = current.month === month ? current : { ...current, month, monthTokens: 0, monthCost: 0 };
-      const next = { ...base, monthTokens: base.monthTokens + safeTokens, monthCost: base.monthCost + safeCost, totalTokens: base.totalTokens + safeTokens, totalCost: base.totalCost + safeCost };
+      const day = currentDay(), month = currentMonth();
+      const base = {
+        ...current, day, month,
+        dayTokens: current.day === day ? current.dayTokens : 0,
+        dayCost: current.day === day ? current.dayCost : 0,
+        monthTokens: current.month === month ? current.monthTokens : 0,
+        monthCost: current.month === month ? current.monthCost : 0,
+      };
+      const next = { ...base, dayTokens: base.dayTokens + safeTokens, dayCost: base.dayCost + safeCost, monthTokens: base.monthTokens + safeTokens, monthCost: base.monthCost + safeCost, totalTokens: base.totalTokens + safeTokens, totalCost: base.totalCost + safeCost };
       try { localStorage.setItem('lucky-usage-totals', JSON.stringify(next)); } catch {}
       return next;
     });
@@ -170,7 +180,9 @@ export function useTranslator() {
         if (Number.isFinite(savedMultiplier) && savedMultiplier >= .1 && savedMultiplier <= 100) setMultiplier(savedMultiplier);
         const savedUsage = JSON.parse(localStorage.getItem('lucky-usage-totals') || 'null') as Partial<UsageTotals> | null;
         if (savedUsage && [savedUsage.monthTokens, savedUsage.monthCost, savedUsage.totalTokens, savedUsage.totalCost].every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0)) {
-          const month = currentMonth(); setUsageTotals({ month, monthTokens: savedUsage.month === month ? savedUsage.monthTokens! : 0, monthCost: savedUsage.month === month ? savedUsage.monthCost! : 0, totalTokens: savedUsage.totalTokens!, totalCost: savedUsage.totalCost! });
+          const day = currentDay(), month = currentMonth();
+          const validDay = savedUsage.day === day && typeof savedUsage.dayTokens === 'number' && Number.isFinite(savedUsage.dayTokens) && savedUsage.dayTokens >= 0 && typeof savedUsage.dayCost === 'number' && Number.isFinite(savedUsage.dayCost) && savedUsage.dayCost >= 0;
+          setUsageTotals({ day, dayTokens: validDay ? savedUsage.dayTokens! : 0, dayCost: validDay ? savedUsage.dayCost! : 0, month, monthTokens: savedUsage.month === month ? savedUsage.monthTokens! : 0, monthCost: savedUsage.month === month ? savedUsage.monthCost! : 0, totalTokens: savedUsage.totalTokens!, totalCost: savedUsage.totalCost! });
         }
       } catch {}
     });
