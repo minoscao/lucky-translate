@@ -14,8 +14,10 @@ export async function POST(request: Request) {
       body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'OK' }], max_tokens: 1 }),
     });
     if (response.ok) return reply({ valid: true });
+    const detail = await response.json().catch(() => null) as { error?: { code?: string } } | null;
     if (response.status === 401) return reply({ error: '这个服务密钥无效，请重新复制完整密钥' }, 401);
-    if (response.status === 403) return reply({ error: 'OpenAI 拒绝了请求，请检查该项目的模型权限或地区限制' }, 403);
+    if (response.status === 403 && detail?.error?.code === 'unsupported_country_region_territory') return reply({ error: '当前云端节点所在地区暂不受支持，请稍后重试' }, 503);
+    if (response.status === 403) return reply({ error: 'OpenAI 拒绝了这个项目的请求，请检查项目权限' }, 403);
     if (response.status === 404) return reply({ error: '当前项目暂时无法调用轻量翻译模型' }, 404);
     if (response.status === 429) return reply({ error: '密钥有效，但当前账户额度不足或请求较多' }, 429);
     return reply({ error: '暂时无法验证密钥，请稍后重试' }, 502);

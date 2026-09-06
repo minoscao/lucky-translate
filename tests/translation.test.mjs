@@ -274,6 +274,8 @@ test('key verification explains invalid credentials and quota limits', async () 
     const invalid = await keyRoute.POST(keyRequest()); assert.equal(invalid.status, 401); assert.match((await invalid.json()).error, /无效/);
     globalThis.fetch = async () => Response.json({ error: {} }, { status: 429 });
     const limited = await keyRoute.POST(keyRequest()); assert.equal(limited.status, 429); assert.match((await limited.json()).error, /额度/);
+    globalThis.fetch = async () => Response.json({ error: { code: 'unsupported_country_region_territory' } }, { status: 403 });
+    const region = await keyRoute.POST(keyRequest()); assert.equal(region.status, 503); assert.match((await region.json()).error, /云端节点/);
   } finally { globalThis.fetch = oldFetch; }
 });
 

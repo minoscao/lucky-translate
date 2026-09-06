@@ -21,6 +21,9 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
 const localBindingConfig = {
   main: 'vinext/server/fetch-handler',
   compatibility_flags: ['nodejs_compat'],
+  // Keep server-side OpenAI requests on a supported, stable cloud region.
+  // Static assets remain globally distributed by Cloudflare.
+  placement: { region: 'aws:us-east-1' },
   d1_databases: d1
     ? [
         {
