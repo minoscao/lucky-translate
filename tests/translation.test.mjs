@@ -114,6 +114,8 @@ test('coach recalls do not turn possible speech-recognition noise into correctio
   assert.match(coach, /IELTS 7 or 8, assume isolated awkward wording is a recording artefact/);
   assert.match(coach, /only add likelyMistakes for a confirmed language issue/);
   assert.match(coach, /Never label a possible recording artefact as a learner mistake/);
+  assert.match(coach, /For IELTS 1–3, keep every turn to one tiny idea/);
+  assert.match(coach, /Adapt chiefly to the learner's actual clear turns/);
 });
 test('Coach pet web assets include both room themes and every desktop action state', async () => {
   const clips = ['belly-enter', 'belly-exit', 'belly-wake', 'belly', 'blink', 'groom', 'idle', 'paw-face', 'pet', 'slap', 'sleep-enter', 'sleep', 'tail', 'talk', 'wake'];
