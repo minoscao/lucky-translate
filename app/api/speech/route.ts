@@ -1,5 +1,6 @@
 import { getAi } from '@/db';
 import { recordServiceCost } from '@/lib/server/account';
+import { base64ToAudio } from '@/lib/server/audio';
 import { requireAccount } from '@/lib/server/auth';
 import { json, readJson, sameOrigin } from '@/lib/server/http';
 import { LANGUAGES } from '@/lib/translation';
@@ -15,8 +16,12 @@ export async function POST(request: Request) {
     const ai = getAi(); if (!ai) return json({ error: 'Cloudflare 语音播放尚未连接，请联系管理员' }, 503);
     const result = await ai.run('@cf/myshell-ai/melotts', { prompt: text, lang: languageCode(selected.code) }, { returnRawResponse: true });
     const response = result instanceof Response ? result : null; if (!response?.ok || !response.body) return json({ error: '语音播放暂时不可用' }, 502);
+    const contentType = response.headers.get('content-type') || '';
+    const audio = contentType.startsWith('audio/') ? null : await response.json().catch(() => null) as { audio?: unknown } | null;
+    const audioData = typeof audio?.audio === 'string' ? base64ToAudio(audio.audio) : null;
+    if (!contentType.startsWith('audio/') && !audioData?.byteLength) return json({ error: '语音播放暂时不可用' }, 502);
     const estimatedSeconds = Math.max(1, text.length / 12), cost = estimatedSeconds / 60 * .0002;
     await recordServiceCost(account, '语音播放', 'cloudflare', 'melotts', cost, { usdPerMinute: .0002, estimatedSeconds });
-    return new Response(response.body, { headers: { 'Content-Type': response.headers.get('content-type') || 'audio/mpeg', 'Cache-Control': 'no-store', 'X-Lucky-Usage-Tokens': '0', 'X-Lucky-Usage-Cost': cost.toFixed(12) } });
+    return new Response(audioData || response.body, { headers: { 'Content-Type': contentType.startsWith('audio/') ? contentType : 'audio/wav', 'Cache-Control': 'no-store', 'X-Lucky-Usage-Tokens': '0', 'X-Lucky-Usage-Cost': cost.toFixed(12) } });
   } catch (error) { return json({ error: error instanceof Error ? error.message : '无法生成语音' }, (error as { status?: number }).status || 500); }
 }
