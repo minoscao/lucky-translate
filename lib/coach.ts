@@ -110,9 +110,10 @@ export async function coachDailySummaryDirect(input: { key: string; history: Coa
     },
   };
   const transcript = input.history.map(message => `${message.role === 'coach' ? 'Coach' : 'Learner'}: ${message.text}`).join('\n').slice(-14000);
-  const prompt = `Create or update today's English learning recall from the conversation below. Write all learning content in clear English. Be specific, constructive, and concise.
-Identify the learner's main weaknesses and useful next focus. Include only vocabulary and grammar grounded in this conversation. Vocabulary rows must contain an English word or short phrase and an English definition. Grammar rows must contain a named grammar point and one natural English example.
-Some learner text may come from speech recognition. If an apparent error may be transcription noise, include it only as a likely mistake and say so in the reason. Never invent a mistake. Empty arrays are allowed when evidence is insufficient.
+  const prompt = `Create or update today's English learning recall from the conversation below. Write all learning content in clear, encouraging English for the learner to read. Be specific, constructive, and concise.
+Focus first on what the learner practised, useful next steps, and language worth carrying forward. Include only vocabulary and grammar grounded in this conversation. Vocabulary rows must contain an English word or short phrase and an English definition. Grammar rows must contain a named grammar point and one natural English example.
+The transcript may contain speech-recognition noise, omitted words, false starts, or self-corrections. Treat a self-reported IELTS score or level in learner memory as meaningful context: for IELTS 7 or 8, assume isolated awkward wording is a recording artefact unless the transcript gives strong contrary evidence. Across every level, only add likelyMistakes for a confirmed language issue: it must either recur in independently clear learner turns or be unambiguously wrong in context and impossible to explain as transcription noise. Do not make a correction from one short phrase, a word-order glitch, a missing word, punctuation, a homophone, or a phrase that could have been self-corrected in speech. If uncertain, omit it completely. Never label a possible recording artefact as a learner mistake. Empty arrays are expected when evidence is insufficient.
+Use warm learner-facing labels in the content: describe a correction as one thing to refine, never as a failure or weakness. Never invent a mistake.
 Learner memory: ${JSON.stringify(input.memory)}
 Existing recall from earlier conversations today (merge rather than repeat): ${JSON.stringify(input.existing || null)}
 Conversation:

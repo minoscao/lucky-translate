@@ -1,7 +1,7 @@
 'use client';
 
 import { PointerEvent, SyntheticEvent, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Check, Download, LoaderCircle, Mic, RotateCcw, Send, Settings2, Square, UserRound, Volume2, X } from 'lucide-react';
+import { ArrowLeft, BookOpenText, Check, Download, GraduationCap, LoaderCircle, MessageCircleHeart, Mic, RotateCcw, Send, Settings2, Sparkles, Square, Target, UserRound, Volume2, WandSparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useCoach } from '@/hooks/use-coach';
@@ -31,12 +31,12 @@ function CoachRecordButton({ coach }: { coach: CoachController }) {
 function RecallTables({ report }: { report: CoachDailySummary | CoachWeeklySummary }) {
   const daily = 'mainFocus' in report ? report : undefined, weekly = 'progress' in report ? report : undefined;
   return <div className="recall-content">
-    <p className="recall-overview">{report.overview}</p>
-    {(daily?.mainFocus.length || weekly?.progress.length) ? <section><h3>{daily ? 'Main focus' : 'Progress'}</h3><ul>{(daily?.mainFocus || weekly?.progress || []).map(item => <li key={item}>{item}</li>)}</ul></section> : null}
-    {weekly?.nextFocus.length ? <section><h3>Next focus</h3><ul>{weekly.nextFocus.map(item => <li key={item}>{item}</li>)}</ul></section> : null}
-    {daily?.likelyMistakes.length ? <section><h3>Likely corrections</h3><div className="recall-mistakes">{daily.likelyMistakes.map(item => <article key={`${item.original}-${item.better}`}><del>{item.original}</del><strong>{item.better}</strong><small>{item.reason}</small></article>)}</div></section> : null}
-    {report.vocabulary.length ? <section><h3>Key vocabulary</h3><div className="recall-table">{report.vocabulary.map(item => <div key={item.word}><strong>{item.word}</strong><span>{item.definition}</span></div>)}</div></section> : null}
-    {report.grammar.length ? <section><h3>Grammar</h3><div className="recall-table grammar">{report.grammar.map(item => <div key={item.point}><strong>{item.point}</strong><span>{item.example}</span></div>)}</div></section> : null}
+    <section className="recall-intro"><h3><Sparkles/>Your session at a glance</h3><p className="recall-overview">{report.overview}</p></section>
+    {(daily?.mainFocus.length || weekly?.progress.length) ? <section><h3><Target/>{daily ? 'What you worked on' : 'What is improving'}</h3><ul>{(daily?.mainFocus || weekly?.progress || []).map(item => <li key={item}>{item}</li>)}</ul></section> : null}
+    {weekly?.nextFocus.length ? <section><h3><WandSparkles/>Your next step</h3><ul>{weekly.nextFocus.map(item => <li key={item}>{item}</li>)}</ul></section> : null}
+    {daily?.likelyMistakes.length ? <section className="recall-refinements"><h3><MessageCircleHeart/>One thing to refine</h3><p>Only clear language patterns are shown here. Possible recording glitches are left out.</p><div className="recall-mistakes">{daily.likelyMistakes.map(item => <article key={`${item.original}-${item.better}`}><span>{item.original}</span><strong>{item.better}</strong><small>{item.reason}</small></article>)}</div></section> : null}
+    {report.vocabulary.length ? <section><h3><BookOpenText/>Words to take with you</h3><div className="recall-table">{report.vocabulary.map(item => <div key={item.word}><strong>{item.word}</strong><span>{item.definition}</span></div>)}</div></section> : null}
+    {report.grammar.length ? <section><h3><GraduationCap/>Grammar in use</h3><div className="recall-table grammar">{report.grammar.map(item => <div key={item.point}><strong>{item.point}</strong><span>{item.example}</span></div>)}</div></section> : null}
   </div>;
 }
 
@@ -85,7 +85,7 @@ export function CoachMode({ coach, speaking, initialStage = 'chat', onBack, onSe
       <p className="coach-record-hint">Tap to keep recording · Hold and release to send</p>
     </>}
     {stage === 'summarizing' && <section className="coach-offer"><LoaderCircle className="summary-spinner spinning"/><h1>Creating today’s recall…</h1><p>Lucky is finding your key vocabulary, grammar and next focus.</p></section>}
-    {stage === 'summary' && selectedSummary && <section className="coach-summary"><header><div><small>DAILY RECALL · {selectedSummary.date}</small><h1>Today’s conversation</h1><span>{selectedSummary.minutes} min</span></div><Button variant="ghost" onClick={() => exportRecall(selectedSummary)}><Download/>TXT</Button></header><RecallTables report={selectedSummary}/><div className="summary-actions"><Button onClick={() => void startPractice()} disabled={coach.busy}>{coach.busy ? <LoaderCircle className="spinning"/> : 'Practise this conversation'}</Button><Button variant="outline" onClick={() => { coach.clearSession(); setStage('chat'); void coach.beginSession(); }}>New conversation</Button></div></section>}
+    {stage === 'summary' && selectedSummary && <section className="coach-summary"><header><div><small>DAILY RECALL · {selectedSummary.date}</small><h1><Sparkles/>Your conversation, in focus</h1><span>{selectedSummary.minutes} min</span></div><Button variant="ghost" onClick={() => exportRecall(selectedSummary)} aria-label="Export today’s recall"><Download/>Export</Button></header><RecallTables report={selectedSummary}/><div className="summary-actions"><Button onClick={() => void startPractice()} disabled={coach.busy}>{coach.busy ? <LoaderCircle className="spinning"/> : 'Practise this conversation'}</Button><Button variant="outline" onClick={() => { coach.clearSession(); setStage('chat'); void coach.beginSession(); }}>New conversation</Button></div></section>}
     {stage === 'dashboard' && <section className="coach-dashboard"><header><div><small>PERSONAL CENTER</small><h1>Your learning</h1></div><Button variant="ghost" onClick={onSettings}><Settings2/>设置</Button></header><div className="coach-stats"><article><strong>{Math.max(0, Math.round(coach.todaySeconds / 60))}</strong><span>minutes today</span></article><article><strong>{coach.dailySummaries.length}</strong><span>daily recalls</span></article><article><strong>{coach.weeklySummaries.length}</strong><span>weekly recalls</span></article></div>
       {latestToday ? <details className="recall-record" open><summary><span>Today · {latestToday.date}</span><strong>{latestToday.minutes} min</strong></summary><RecallTables report={latestToday}/><Button variant="ghost" onClick={() => exportRecall(latestToday)}><Download/>Export TXT</Button></details> : <div className="empty-recall"><p>今天还没有总结。</p><Button disabled={coach.history.length < 2 || coach.busy} onClick={() => void summarize()}>总结今天的对话</Button></div>}
       {coach.dailySummaries.filter(item => item.id !== latestToday?.id).map(item => <details className="recall-record" key={item.id}><summary><span>{item.date} · Daily Recall</span><strong>{item.minutes} min</strong></summary><RecallTables report={item}/><Button variant="ghost" onClick={() => exportRecall(item)}><Download/>Export TXT</Button></details>)}

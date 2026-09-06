@@ -109,6 +109,12 @@ test('translation time is charged at ten percent while coaching time is charged 
   assert.match(account, /category === 'translation' \? Math\.ceil\(safe \* \.1\) : safe/);
   assert.match(account, /category === 'training' \? safe : 0/);
 });
+test('coach recalls do not turn possible speech-recognition noise into corrections', async () => {
+  const coach = await readFile(new URL('../lib/coach.ts', import.meta.url), 'utf8');
+  assert.match(coach, /IELTS 7 or 8, assume isolated awkward wording is a recording artefact/);
+  assert.match(coach, /only add likelyMistakes for a confirmed language issue/);
+  assert.match(coach, /Never label a possible recording artefact as a learner mistake/);
+});
 test('Coach pet web assets include both room themes and every desktop action state', async () => {
   const clips = ['belly-enter', 'belly-exit', 'belly-wake', 'belly', 'blink', 'groom', 'idle', 'paw-face', 'pet', 'slap', 'sleep-enter', 'sleep', 'tail', 'talk', 'wake'];
   for (const file of ['coach-room-day.webp', 'coach-room-night.webp', ...clips.map(name => `pet/${name}.webp`)]) {

@@ -259,8 +259,10 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .coach-summary > header small, .coach-dashboard > header small { color: var(--self-accent); font-size: .7rem; font-weight: 800; letter-spacing: .1em; }
 .coach-summary > header span { color: var(--muted-foreground); font-size: .78rem; }
 .recall-content { display: grid; gap: 18px; text-align: left; }
+.recall-content section h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 8px; color: var(--muted-foreground); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
+.recall-content section h3 svg { width: 15px; height: 15px; color: var(--self-accent); stroke-width: 2.2; }
+.recall-intro h3 { color: var(--self-accent) !important; }
 .recall-overview { margin: 0; padding: 14px; border: 1px solid var(--partner-border); border-radius: 14px; background: var(--partner-surface); line-height: 1.55; }
-.recall-content section h3 { margin: 0 0 8px; color: var(--muted-foreground); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
 .recall-content ul { display: grid; gap: 6px; margin: 0; padding-left: 20px; line-height: 1.5; }
 .recall-table, .recall-mistakes { overflow: hidden; border: 1px solid var(--border); border-radius: 14px; }
 .recall-table > div, .recall-mistakes > article { display: grid; grid-template-columns: minmax(100px, .38fr) 1fr; gap: 12px; padding: 10px 12px; border-top: 1px solid var(--border); line-height: 1.45; }
@@ -268,11 +270,14 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .recall-table strong { color: var(--partner-accent); }
 .recall-table span { color: var(--muted-foreground); }
 .recall-mistakes > article { grid-template-columns: 1fr 1fr; }
-.recall-mistakes del { color: var(--destructive); }
+.recall-refinements > p { margin: -2px 0 9px; color: var(--muted-foreground); font-size: .78rem; line-height: 1.45; }
+.recall-mistakes span { color: var(--muted-foreground); }
 .recall-mistakes strong { color: var(--partner-accent); }
 .recall-mistakes small { grid-column: 1 / -1; color: var(--muted-foreground); line-height: 1.45; }
 .summary-actions { display: grid; gap: 8px; margin-top: 22px; }
 .summary-actions button { min-height: 48px; border-radius: 14px; }
+.coach-summary > header h1 { display: flex; align-items: center; gap: 9px; }
+.coach-summary > header h1 svg { width: .9em; height: .9em; color: var(--self-accent); }
 .coach-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 18px; }
 .coach-stats article { display: grid; gap: 2px; padding: 12px 9px; border: 1px solid var(--border); border-radius: 14px; background: var(--secondary); text-align: center; }
 .coach-stats strong { color: var(--primary); font-size: 1.4rem; }
