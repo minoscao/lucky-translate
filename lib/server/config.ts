@@ -1,5 +1,5 @@
 import { getDb } from '@/db';
-import { DEFAULT_COACH_SKILL } from '@/lib/coach';
+import { COACH_RESPONSE_CONTRACT, DEFAULT_COACH_SKILL } from '@/lib/coach';
 
 const encoder = new TextEncoder(), decoder = new TextDecoder();
 const password = () => process.env.ADMIN_PASSWORD || 'Minocolin1';
@@ -34,7 +34,8 @@ export async function deepSeekConfigured() {
 
 export async function getCoachSkill() {
   const row = await getDb().prepare("SELECT value FROM app_config WHERE key = 'coach_skill'").first<{ value: string }>();
-  return row?.value?.trim().replace(/^You are Luna,/, 'You are Lucky,') || DEFAULT_COACH_SKILL;
+  const skill = row?.value?.trim().replace(/^You are Luna,/, 'You are Lucky,') || DEFAULT_COACH_SKILL;
+  return skill.includes(COACH_RESPONSE_CONTRACT) ? skill : `${skill}\n\n${COACH_RESPONSE_CONTRACT}`;
 }
 
 export async function setCoachSkill(value: string) {
