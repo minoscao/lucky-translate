@@ -14,24 +14,25 @@ import { createCustomVoiceDirect, DirectApiError, synthesizeSpeechDirect, Transl
 import { LANGUAGES, LanguageCode, Pair, conversationText, language, selectLanguage, transcriptForLanguage } from '@/lib/translation';
 
 type InstallEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
-type LayoutMode = 'face-to-face' | 'same-direction';
-function RecordButton({ controller: t, side, onBeforeRecord }: { controller: ReturnType<typeof useTranslator>; side: 0 | 1; onBeforeRecord: () => void }) {
+type LayoutMode = 'face-to-face' | 'single-operator';
+type SoloDirection = 'listening' | 'speaking';
+function RecordButton({ controller: t, side, autoSpeakSide, detectSpeaker = true, compact = false, onBeforeRecord }: { controller: ReturnType<typeof useTranslator>; side: 0 | 1; autoSpeakSide?: 0 | 1; detectSpeaker?: boolean; compact?: boolean; onBeforeRecord: () => void }) {
   const [pressed, setPressed] = useState(false);
   const keyHeld = useRef(false), pointerHeld = useRef(false);
   const isRecording = t.mode !== 'idle';
   const stopTouch = () => { pointerHeld.current = false; setPressed(false); void t.stop(); };
   const state = t.phase === 'permission' ? 'permission' : t.mode;
   const primary = INTERFACE_COPY[t.pair[side]][state];
-  return <div className="record-area">
+  return <div className={`record-area ${compact ? 'compact-record' : ''}`}>
         <Button className="record-button" data-mode={t.mode} data-pressed={pressed} aria-pressed={isRecording} aria-label={primary} disabled={t.phase === 'stopping'}
           onContextMenu={event => event.preventDefault()}
-          onPointerDown={event => { onBeforeRecord(); if (t.pointerDown(event, side)) { pointerHeld.current = true; setPressed(true); } }}
-          onPointerUp={event => { pointerHeld.current = false; setPressed(false); t.pointerUp(event, side); }}
+          onPointerDown={event => { onBeforeRecord(); if (t.pointerDown(event, side, autoSpeakSide, detectSpeaker)) { pointerHeld.current = true; setPressed(true); } }}
+          onPointerUp={event => { pointerHeld.current = false; setPressed(false); t.pointerUp(event, side, autoSpeakSide, detectSpeaker); }}
           onPointerCancel={() => { if (pointerHeld.current) stopTouch(); }}
           onLostPointerCapture={() => { if (pointerHeld.current) stopTouch(); }}
           onPointerMove={event => { if (!pressed) return; const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left - 28 || event.clientX > rect.right + 28 || event.clientY < rect.top - 28 || event.clientY > rect.bottom + 28) stopTouch(); }}
-          onClick={event => { if (event.detail === 0) { onBeforeRecord(); t.toggle(side); } }}
-          onKeyDown={event => { if (event.key === ' ') { event.preventDefault(); if (!event.repeat && !keyHeld.current) { keyHeld.current = true; setPressed(true); onBeforeRecord(); t.toggle(side); } } else if (event.key === 'Enter') { event.preventDefault(); if (!event.repeat) { onBeforeRecord(); t.toggle(side); } } else if (event.key === 'Escape') stopTouch(); }}
+          onClick={event => { if (event.detail === 0) { onBeforeRecord(); t.toggle(side, autoSpeakSide, detectSpeaker); } }}
+          onKeyDown={event => { if (event.key === ' ') { event.preventDefault(); if (!event.repeat && !keyHeld.current) { keyHeld.current = true; setPressed(true); onBeforeRecord(); t.toggle(side, autoSpeakSide, detectSpeaker); } } else if (event.key === 'Enter') { event.preventDefault(); if (!event.repeat) { onBeforeRecord(); t.toggle(side, autoSpeakSide, detectSpeaker); } } else if (event.key === 'Escape') stopTouch(); }}
           onKeyUp={event => { if (event.key === ' ') { event.preventDefault(); keyHeld.current = false; stopTouch(); } }}
           onBlur={() => { if (keyHeld.current) { keyHeld.current = false; stopTouch(); } }}>
           {t.phase === 'permission' ? <LoaderCircle className="spinning" /> : t.mode === 'continuous' ? <Square fill="currentColor" /> : <Mic />}
@@ -45,10 +46,10 @@ function RecordButton({ controller: t, side, onBeforeRecord }: { controller: Ret
 type PanelProps = {
   controller: ReturnType<typeof useTranslator>; onHistory: () => void;
   totals: { dayTokens: number; dayCost: number; monthTokens: number; monthCost: number; totalTokens: number; totalCost: number }; multiplier: number;
-  side: 0 | 1; isSelf: boolean; facingAway: boolean; ownName: string; pair: Pair; entries: { id: number; text: string; speaker: 'self' | 'other' }[]; locked: boolean; canSpeak: boolean;
+  side: 0 | 1; visualRow: number; isSelf: boolean; facingAway: boolean; showRecord: boolean; ownName: string; pair: Pair; entries: { id: number; text: string; speaker: 'self' | 'other'; pending?: boolean; provisional?: boolean }[]; locked: boolean; canSpeak: boolean;
   onLanguage: (pair: Pair) => void; onEdit: (id: number, text: string) => void; onSpeak: (text: string) => void; onBeforeRecord: () => void; onUsage: () => void;
 };
-function LanguagePanel({ controller, onHistory, totals, multiplier, side, isSelf, facingAway, ownName, pair, entries, locked, canSpeak, onLanguage, onEdit, onSpeak, onBeforeRecord, onUsage }: PanelProps) {
+function LanguagePanel({ controller, onHistory, totals, multiplier, side, visualRow, isSelf, facingAway, showRecord, ownName, pair, entries, locked, canSpeak, onLanguage, onEdit, onSpeak, onBeforeRecord, onUsage }: PanelProps) {
   const viewport = useRef<HTMLElement>(null), following = useRef(true), previousLanguage = useRef(pair[side]);
   const [bounds, setBounds] = useState({ top: true, bottom: true });
   useEffect(() => {
@@ -73,7 +74,7 @@ function LanguagePanel({ controller, onHistory, totals, multiplier, side, isSelf
     following.current = false;
     view.scrollBy({ top: direction * view.clientHeight * .8, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
   };
-  return <section className={`language-panel ${isSelf ? 'self' : 'partner'} ${facingAway ? 'facing-away' : ''}`} style={{ gridRow: side === 0 ? 1 : 3 }} aria-label={isSelf ? '你的翻译区' : '对方的翻译区'}>
+  return <section className={`language-panel ${isSelf ? 'self' : 'partner'} ${facingAway ? 'facing-away' : ''}`} style={{ gridRow: visualRow }} aria-label={isSelf ? '你的翻译区' : '对方的翻译区'}>
     <header className="panel-head">
       <span className="side-label"><span className="side-dot" />{isSelf ? ownName : 'other speaks'}{isSelf && <Button variant="ghost" className="history-entry" onClick={onHistory} aria-label="查看完整对话"><History /><span>完整对话</span></Button>}</span>
       {isSelf && <button type="button" className="usage-meter" onClick={onUsage} aria-label={`今日费用 ${(totals.dayCost * multiplier).toFixed(2)} 美元，点击查看使用明细`}><small>今日</small><strong>${(totals.dayCost * multiplier).toFixed(2)}</strong></button>}
@@ -88,17 +89,17 @@ function LanguagePanel({ controller, onHistory, totals, multiplier, side, isSelf
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Keyboard users must be able to focus and scroll this reading region. */}
       <section ref={viewport} className="transcript-viewport" tabIndex={0} aria-label="对话内容，可上下滚动">
         <div className="transcript-stack" lang={pair[side]}>
-          {entries.length ? entries.map((item, index) => <p key={item.id} className={`transcript-line ${index === entries.length - 1 ? 'current' : 'previous'}`} dir="auto">
-            <Button type="button" variant="ghost" className="turn-speak" onClick={() => onSpeak(item.text)} disabled={!canSpeak || locked} aria-label={`朗读：${item.text}`} title="朗读这句"><Volume2 /></Button>
-            <span className={`turn-speaker ${item.speaker}`}>{item.speaker === 'self' ? ownName : 'other speaks'}</span>
+          {entries.length ? entries.map((item, index) => <p key={item.id} className={`transcript-line ${index === entries.length - 1 ? 'current' : 'previous'} ${item.pending ? 'pending-turn' : ''}`} dir="auto">
+            {item.pending ? <LoaderCircle className="turn-loading spinning" /> : <Button type="button" variant="ghost" className="turn-speak" onClick={() => onSpeak(item.text)} disabled={!canSpeak || locked || item.provisional} aria-label={`朗读：${item.text}`} title="朗读这句"><Volume2 /></Button>}
+            {!item.pending && <span className={`turn-speaker ${item.speaker}`}>{item.speaker === 'self' ? ownName : 'other speaks'}</span>}
             {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- A button blocks the native mobile text-selection menu. */}
-            <span className="turn-text" tabIndex={locked ? -1 : 0} aria-disabled={locked} aria-label="点击修改；长按可选择、复制或全选文字" onClick={() => { if (!locked && !window.getSelection()?.toString()) onEdit(item.id, item.text); }} onKeyDown={event => { if (!locked && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onEdit(item.id, item.text); } }}>{item.text}</span>
+            <span className="turn-text" tabIndex={locked || item.pending || item.provisional ? -1 : 0} aria-disabled={locked || item.pending || item.provisional} aria-label={item.pending ? '正在翻译' : item.provisional ? '刚刚识别出的原话' : '点击修改；长按可选择、复制或全选文字'} onClick={() => { if (!locked && !item.pending && !item.provisional && !window.getSelection()?.toString()) onEdit(item.id, item.text); }} onKeyDown={event => { if (!locked && !item.pending && !item.provisional && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onEdit(item.id, item.text); } }}>{item.text}</span>
           </p>) : <p className="transcript-line current empty">{INTERFACE_COPY[pair[side]].ready}</p>}
         </div>
       </section>
       <nav className="transcript-nav" aria-label="翻阅对话"><Button variant="ghost" disabled={bounds.top} onClick={() => scroll(-1)} aria-label="向上查看较早对话" title="上一页"><ChevronUp /></Button><Button variant="ghost" disabled={bounds.bottom} onClick={() => scroll(1)} aria-label="向下查看后续对话" title="下一页"><ChevronDown /></Button></nav>
     </div>
-    <RecordButton controller={controller} side={side} onBeforeRecord={onBeforeRecord} />
+    {showRecord && <RecordButton controller={controller} side={side} onBeforeRecord={onBeforeRecord} />}
   </section>;
 }
 
@@ -122,19 +123,28 @@ export default function Home() {
   const [checkingKey, setCheckingKey] = useState(false);
   const [speechSpeed, setSpeechSpeed] = useState(1);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('face-to-face');
+  const [soloDirection, setSoloDirection] = useState<SoloDirection>('listening');
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const playedSpeech = useRef(0);
   const voiceOfferChecked = useRef(false);
   const speechRequest = useRef(0), speechAbort = useRef<AbortController | undefined>(undefined), speechAudio = useRef<HTMLAudioElement | undefined>(undefined), speechUrl = useRef('');
   const { openaiKey, addUsage, setError: reportError, setNotice: reportNotice } = t;
   const locked = t.mode !== 'idle' || t.phase !== 'ready' || t.pending > 0;
-  const panelEntries = useMemo(() => [transcriptForLanguage(t.history, t.pair[0]), transcriptForLanguage(t.history, t.pair[1])], [t.history, t.pair]);
+  const panelEntries = useMemo(() => {
+    const panels = [transcriptForLanguage(t.history, t.pair[0]), transcriptForLanguage(t.history, t.pair[1])] as Array<Array<{ id: number; text: string; speaker: 'self' | 'other'; pending?: boolean; provisional?: boolean }>>;
+    for (const turn of t.pendingTurns) {
+      panels[turn.sourceSide].push({ id: -turn.id * 2, text: turn.text, speaker: turn.speaker, provisional: true });
+      panels[1 - turn.sourceSide].push({ id: -turn.id * 2 - 1, text: '正在翻译…', speaker: turn.speaker, pending: true });
+    }
+    return panels;
+  }, [t.history, t.pair, t.pendingTurns]);
   const visibleDialog = t.needsSettings ? 'settings' : dialog;
   useEffect(() => {
     void fetch('/api/unlock', { credentials: 'same-origin' }).then(response => response.json()).then(data => setAccess((data as { unlocked?: boolean }).unlocked ? 'unlocked' : 'locked')).catch(() => { setAccess('locked'); setAccessError('无法检查访问状态，请刷新后重试'); });
     queueMicrotask(() => { setInstalled(window.matchMedia('(display-mode: standalone)').matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone)); });
     queueMicrotask(() => { const speed = Number(localStorage.getItem('lucky-speech-speed')); if ([.75, 1, 1.5, 2].includes(speed)) setSpeechSpeed(speed); });
-    queueMicrotask(() => { if (localStorage.getItem('lucky-layout') === 'same-direction') setLayoutMode('same-direction'); });
+    queueMicrotask(() => { const layout = localStorage.getItem('lucky-layout'); if (layout === 'single-operator' || layout === 'same-direction') setLayoutMode('single-operator'); });
+    queueMicrotask(() => { if (localStorage.getItem('lucky-solo-direction') === 'speaking') setSoloDirection('speaking'); });
     queueMicrotask(() => { try { const profile = JSON.parse(localStorage.getItem('lucky-profile') || 'null'); if (typeof profile?.name === 'string') { setOwnName(profile.name.trim().slice(0, 24) || 'Me'); return; } } catch {} setDialog('name'); });
     const before = (event: Event) => { event.preventDefault(); setInstallEvent(event as InstallEvent); };
     const installedHandler = () => { setInstalled(true); setInstallEvent(undefined); };
@@ -189,10 +199,11 @@ export default function Home() {
   }, [addUsage, openaiKey, reportError, reportNotice, speechSpeed, stopSpeech]);
   useEffect(() => {
     const request = t.autoSpeech;
-    if (!request || request.id === playedSpeech.current || t.mode !== 'idle' || t.phase !== 'ready') return;
+    const mayPlay = (t.mode === 'idle' && t.phase === 'ready') || (layoutMode === 'single-operator' && t.mode === 'continuous' && t.phase === 'listening');
+    if (!request || request.id === playedSpeech.current || !mayPlay) return;
     playedSpeech.current = request.id;
     void playSpeech(request.text, request.lang);
-  }, [t.autoSpeech, t.mode, t.phase, playSpeech]);
+  }, [t.autoSpeech, t.mode, t.phase, layoutMode, playSpeech]);
   useEffect(() => stopSpeech, [stopSpeech]);
   const copyConversation = async () => {
     try { await navigator.clipboard.writeText(conversationText(t.history, ownName)); setCopied(true); clearTimeout(copyTimer.current); copyTimer.current = setTimeout(() => setCopied(false), 1800); }
@@ -251,12 +262,16 @@ export default function Home() {
     await t.stop(); await installEvent.prompt(); const result = await installEvent.userChoice;
     if (result.outcome === 'accepted') setInstallEvent(undefined);
   };
-  const status = t.error || (t.phase === 'permission' ? '请允许使用麦克风…' : t.phase === 'listening' ? (t.pending ? '正在聆听 · 译文即将出现' : '正在聆听，双方都可以说话') : t.phase === 'stopping' ? '正在结束录音…' : t.pending ? `正在翻译${t.pending > 1 ? ` · ${t.pending} 句` : ''}` : t.notice);
+  const status = t.error || (t.phase === 'permission' ? '请允许使用麦克风…' : t.phase === 'listening' ? (layoutMode === 'single-operator' ? '' : '正在聆听，双方都可以说话') : t.phase === 'stopping' ? '正在结束录音…' : t.notice);
   const usageRows = [
     { label: '今日', tokens: t.usageTotals.dayTokens, cost: t.usageTotals.dayCost },
     { label: '本月', tokens: t.usageTotals.monthTokens, cost: t.usageTotals.monthCost },
     { label: '累计', tokens: t.usageTotals.totalTokens, cost: t.usageTotals.totalCost },
   ];
+  const selfSide = (t.selfOnTop ? 0 : 1) as 0 | 1, otherSide = (1 - selfSide) as 0 | 1;
+  const panelOrder: Array<0 | 1> = layoutMode === 'single-operator' ? [otherSide, selfSide] : [0, 1];
+  const soloInputSide = soloDirection === 'listening' ? otherSide : selfSide;
+  const soloOutputSide = soloDirection === 'listening' ? selfSide : otherSide;
   if (access !== 'unlocked') return <main className="access-page"><section className="access-card" aria-busy={access === 'checking'}>
     <div className="access-mark"><ShieldCheck /></div><h1>Lucky 同声翻译</h1>
     {access === 'checking' ? <p><LoaderCircle className="spinning" />正在检查访问权限…</p> : <form onSubmit={unlock}>
@@ -266,13 +281,20 @@ export default function Home() {
       <Button type="submit" className="form-submit" disabled={!accessPassword || unlocking}>{unlocking ? <><LoaderCircle className="spinning" />正在验证</> : '进入网站'}</Button>
     </form>}
   </section></main>;
-  return <main className="translator"><div className="app-frame">
-    {([0, 1] as const).map(side => <LanguagePanel key={side} controller={t} onHistory={() => open('history')} totals={t.usageTotals} multiplier={t.multiplier} side={side} isSelf={t.selfOnTop ? side === 0 : side === 1} facingAway={layoutMode === 'face-to-face' && side === 0} ownName={ownName} pair={t.pair} entries={panelEntries[side]} locked={locked} canSpeak={Boolean(t.openaiKey)} onLanguage={t.changePair} onEdit={(id, text) => editSentence(side, id, text)} onSpeak={text => void playSpeech(text, t.pair[side])} onBeforeRecord={stopSpeech} onUsage={() => open('usage', side)} />)}
-    <section className="control-deck" aria-label="录音控制">
-      <div className="deck-top"><Button variant="outline" className="side-swap" onClick={() => t.swapSides()} disabled={locked} aria-label="上下切换双方位置" title="上下切换"><ArrowDownUp /><span>切换</span></Button><h1 className="wordmark">LUCKY<span>同声翻译</span></h1><div className="deck-actions">
+  return <main className="translator"><div className={`app-frame ${layoutMode === 'single-operator' ? 'single-operator' : ''}`}>
+    {panelOrder.map((side, index) => <LanguagePanel key={side} controller={t} onHistory={() => open('history')} totals={t.usageTotals} multiplier={t.multiplier} side={side} visualRow={layoutMode === 'single-operator' ? index + 1 : side === 0 ? 1 : 3} isSelf={side === selfSide} facingAway={layoutMode === 'face-to-face' && side === 0} showRecord={layoutMode === 'face-to-face'} ownName={ownName} pair={t.pair} entries={panelEntries[side]} locked={locked} canSpeak={Boolean(t.openaiKey)} onLanguage={t.changePair} onEdit={(id, text) => editSentence(side, id, text)} onSpeak={text => void playSpeech(text, t.pair[side])} onBeforeRecord={stopSpeech} onUsage={() => open('usage', side)} />)}
+    <section className={`control-deck ${layoutMode === 'single-operator' ? 'single-control-deck' : ''}`} aria-label="录音控制">
+      <div className="deck-top">{layoutMode === 'face-to-face' && <Button variant="outline" className="side-swap" onClick={() => t.swapSides()} disabled={locked} aria-label="上下切换双方位置" title="上下切换"><ArrowDownUp /><span>切换</span></Button>}<h1 className="wordmark">LUCKY<span>同声翻译</span></h1><div className="deck-actions">
         <Button variant="ghost" onClick={() => open('history')} aria-label="对话记录" title="对话记录"><History /></Button>
         <Button variant="ghost" onClick={() => open('settings')} aria-label="翻译设置" title="设置"><Settings2 /></Button>
       </div></div>
+      {layoutMode === 'single-operator' && <div className="solo-controls">
+        <RecordButton controller={t} side={soloInputSide} autoSpeakSide={soloOutputSide} detectSpeaker={false} compact onBeforeRecord={stopSpeech} />
+        <fieldset className="solo-direction" aria-label="翻译方向">
+          <Button type="button" variant="ghost" data-active={soloDirection === 'listening'} aria-pressed={soloDirection === 'listening'} aria-label={`Listening：${language(t.pair[otherSide])?.label}翻译为${language(t.pair[selfSide])?.label}`} disabled={locked} onClick={() => { setSoloDirection('listening'); try { localStorage.setItem('lucky-solo-direction', 'listening'); } catch {} }}>Listening</Button>
+          <Button type="button" variant="ghost" data-active={soloDirection === 'speaking'} aria-pressed={soloDirection === 'speaking'} aria-label={`Speaking：${language(t.pair[selfSide])?.label}翻译为${language(t.pair[otherSide])?.label}`} disabled={locked} onClick={() => { setSoloDirection('speaking'); try { localStorage.setItem('lucky-solo-direction', 'speaking'); } catch {} }}>Speaking</Button>
+        </fieldset>
+      </div>}
       {status && <output className={`status-line ${t.error ? 'has-error' : ''}`} aria-live="polite">{t.pending > 0 && !t.error && <LoaderCircle className="spinning" />}<span>{status}</span></output>}
       {t.failed && <Button variant="outline" className="retry-button" disabled={locked} onClick={t.retry}>重试上一句</Button>}
     </section>
@@ -292,9 +314,9 @@ export default function Home() {
       {visibleDialog === 'name' && <form onSubmit={event => { event.preventDefault(); saveName(draftName); }}><label htmlFor="display-name" className="field-label">你的名字 / Your name</label><Input id="display-name" className="app-input" value={draftName} onChange={event => setDraftName(event.target.value)} placeholder="Me" maxLength={24} autoComplete="nickname" /><p className="field-note">只保存在这台设备，下次自动使用。</p><Button type="submit" className="form-submit">{draftName.trim() ? '记住名字，开始对话' : '使用 Me，开始对话'}</Button></form>}
       {visibleDialog === 'settings' && <form onSubmit={saveSettings}>
         <div className="profile-setting"><span>{ownName}</span><Button type="button" variant="ghost" onClick={() => open('name')}>修改名字</Button></div>
-        <div className="profile-setting"><span>{voiceId ? '已使用我的声音' : '内置 AI 声音'}</span><Button type="button" variant="ghost" onClick={() => { setConsentAudio(undefined); setSampleAudio(undefined); open('voice'); }}>{voiceId ? '重新录制' : '训练我的声音'}</Button></div>
+        <div className="profile-setting"><span>{voiceId ? 'OpenAI · 已使用我的声音' : 'OpenAI · 内置 AI 声音'}</span><Button type="button" variant="ghost" disabled={!draftOpenAIKey.trim()} onClick={() => { setConsentAudio(undefined); setSampleAudio(undefined); open('voice'); }}>{draftOpenAIKey.trim() ? (voiceId ? '重新录制' : '训练我的声音') : '需 OpenAI 密钥'}</Button></div>
         <label className="field-label" htmlFor="layout-mode">页面布局</label>
-        <Select value={layoutMode} onValueChange={value => { if (!value) return; const layout = value as LayoutMode; setLayoutMode(layout); try { localStorage.setItem('lucky-layout', layout); } catch {} }}><SelectTrigger id="layout-mode" className="app-input"><SelectValue>{layoutMode === 'face-to-face' ? '面对面 · 上方倒转' : '同向 · 上下阅读'}</SelectValue></SelectTrigger><SelectContent><SelectItem value="face-to-face">面对面 · 上方倒转</SelectItem><SelectItem value="same-direction">同向 · 上下阅读</SelectItem></SelectContent></Select>
+        <Select value={layoutMode} onValueChange={value => { if (!value) return; const layout = value as LayoutMode; setLayoutMode(layout); try { localStorage.setItem('lucky-layout', layout); } catch {} }}><SelectTrigger id="layout-mode" className="app-input"><SelectValue>{layoutMode === 'face-to-face' ? '面对面 · 双方操作' : '单人 · Listening / Speaking'}</SelectValue></SelectTrigger><SelectContent><SelectItem value="face-to-face">面对面 · 双方操作</SelectItem><SelectItem value="single-operator">单人 · Listening / Speaking</SelectItem></SelectContent></Select>
         <label className="field-label" htmlFor="translation-provider">文字翻译引擎</label>
         <Select value={draftProvider} onValueChange={value => { if (value) setDraftProvider(value as TranslationProvider); }}><SelectTrigger id="translation-provider" className="app-input"><SelectValue>{draftProvider === 'deepseek' ? 'DeepSeek · V4 Flash' : 'OpenAI · GPT-4o mini'}</SelectValue></SelectTrigger><SelectContent><SelectItem value="openai">OpenAI · GPT-4o mini</SelectItem><SelectItem value="deepseek">DeepSeek · V4 Flash</SelectItem></SelectContent></Select>
         <label className="field-label" htmlFor="openai-key">OpenAI 密钥</label>
@@ -334,7 +356,7 @@ export default function Home() {
         <div className="help-row"><ArrowUpFromLine /><div><strong>iPhone / iPad</strong><p>在 Safari 中打开，点“分享”，选择“添加到主屏幕”。</p></div></div>
         <div className="help-row"><Download /><div><strong>安卓手机 / 电脑</strong><p>在 Chrome 中打开，点浏览器菜单，选择“安装应用”或“添加到主屏幕”。</p></div></div>
         {installEvent && <Button className="form-submit" onClick={() => void install()}>添加 Lucky 到桌面</Button>}
-        <details className="inline-help"><summary>录音怎么用<ChevronDown /></summary><p>谁说话就长按谁那一侧的按钮，松手后译文会出现在双方完整对话中，并自动用另一侧语言朗读。快速双击开启持续录音，再点一次停止。</p><p>持续录音会归到启动按钮对应的人。翻译需要联网；切到后台或锁屏会停止录音。播放声音由 AI 生成。</p></details>
+        <details className="inline-help"><summary>录音怎么用<ChevronDown /></summary>{layoutMode === 'face-to-face' ? <p>谁说话就长按谁那一侧的按钮，松手后译文会出现在双方完整对话中，并自动用另一侧语言朗读。快速双击开启持续录音，再点一次停止。</p> : <p>在底部选择 Listening 接收对方说话，或选择 Speaking 表达自己的话；再按住圆形按钮录音。快速双击可持续录音，再点一次停止。</p>}<p>识别出的原话会先显示，译文完成后自动播放目标语言。翻译需要联网；切到后台或锁屏会停止录音。播放声音由 AI 生成。</p></details>
       </div>}
     </DialogContent>
   </Dialog>

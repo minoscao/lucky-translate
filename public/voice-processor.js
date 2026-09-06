@@ -9,7 +9,7 @@ class LuckyVoice extends AudioWorkletProcessor {
     this.phase = 0; this.resampleSum = 0; this.resampleCount = 0;
     this.pitchFrames = 0; this.speakerPitch = 0; this.changeCandidate = 0;
     this.port.onmessage = ({ data }) => {
-      if (data.type === 'config') { this.autoSilenceSeconds = data.mode === 'continuous' ? 5 : Infinity; this.detectSpeaker = data.mode === 'continuous'; }
+      if (data.type === 'config') { this.autoSilenceSeconds = data.mode === 'continuous' ? 5 : Infinity; this.detectSpeaker = data.mode === 'continuous' && data.detectSpeaker !== false; }
       if (data.type === 'flush') { this.emit('stop'); this.active = false; this.port.postMessage({ type: 'flushed' }); }
     };
   }

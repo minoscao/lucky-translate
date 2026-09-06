@@ -4,7 +4,8 @@ import { createConversationStore, language, Pair, RecordGesture, RecordMode, Spe
 import { VoiceRecorder } from '@/lib/voice-recorder';
 import { translateDirect, TranslationProvider } from '@/lib/direct-api';
 
-type Job = { audio?: Blob; text?: string; pair: Pair; replaceId?: number; speaker: Speaker; autoSpeakSide?: 0 | 1 };
+type Job = { id?: number; audio?: Blob; text?: string; pair: Pair; replaceId?: number; speaker: Speaker; sourceSide?: 0 | 1; autoSpeakSide?: 0 | 1 };
+type PendingTurn = { id: number; sourceSide: 0 | 1; speaker: Speaker; text: string };
 type UsageTotals = { day: string; dayTokens: number; dayCost: number; month: string; monthTokens: number; monthCost: number; totalTokens: number; totalCost: number };
 const currentDay = () => {
   const now = new Date();
@@ -31,12 +32,14 @@ export function useTranslator() {
   const [multiplier, setMultiplier] = useState(1);
   const [needsSettings, setNeedsSettings] = useState(false);
   const [failed, setFailed] = useState<Job>();
+  const [pendingTurns, setPendingTurns] = useState<PendingTurn[]>([]);
   const [autoSpeech, setAutoSpeech] = useState<{ id: number; text: string; lang: string }>();
   const gesture = useRef(new RecordGesture()), recorder = useRef<VoiceRecorder | undefined>(undefined);
   const live = useRef({ pair, openaiKey, deepseekKey, translationProvider, selfOnTop });
   useEffect(() => { live.current = { pair, openaiKey, deepseekKey, translationProvider, selfOnTop }; }, [pair, openaiKey, deepseekKey, translationProvider, selfOnTop]);
   const activeCapture = useRef<{ pair: Pair; speaker: Speaker; side: 0 | 1; autoSpeakSide?: 0 | 1 }>({ pair, speaker: 'self', side: 1 });
   const speechSequence = useRef(0);
+  const jobSequence = useRef(0);
   const generation = useRef(0), active = useRef(false), queue = useRef<Job[]>([]);
   const controller = useRef<AbortController | undefined>(undefined);
   const holdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -77,7 +80,7 @@ export function useTranslator() {
   }, []);
   const cancel = useCallback(() => {
     generation.current++; controller.current?.abort(); controller.current = undefined;
-    queue.current = []; pumping.current = false; setPending(0);
+    queue.current = []; pumping.current = false; setPending(0); setPendingTurns([]);
     void stop(false);
   }, [stop]);
   const pump = useCallback(() => {
@@ -86,13 +89,16 @@ export function useTranslator() {
     const token = generation.current, abort = new AbortController(); controller.current = abort;
     pumping.current = true; setPending(queue.current.length + 1);
     const timeout = setTimeout(() => abort.abort('timeout'), 65000);
-    translateDirect({ audio: job.audio, text: job.text, pair: job.pair, context: conversation.context(job.replaceId), provider: live.current.translationProvider, openaiKey: live.current.openaiKey, deepseekKey: live.current.deepseekKey, signal: abort.signal })
+    translateDirect({ audio: job.audio, text: job.text, pair: job.pair, context: conversation.context(job.replaceId), provider: live.current.translationProvider, openaiKey: live.current.openaiKey, deepseekKey: live.current.deepseekKey, signal: abort.signal,
+      onTranscribed: job.id !== undefined && job.sourceSide !== undefined ? text => { if (token === generation.current && mounted.current) setPendingTurns(current => [...current.filter(item => item.id !== job.id), { id: job.id!, sourceSide: job.sourceSide!, speaker: job.speaker, text }]); } : undefined,
+    })
       .then(data => {
         if (token !== generation.current || !mounted.current) return;
-        if (data.empty) { setNotice('没有听清，请再说一次'); return; }
+        if (data.empty) { if (job.id !== undefined) setPendingTurns(current => current.filter(item => item.id !== job.id)); setNotice('没有听清，请再说一次'); return; }
         const result: Translation = { upper: data.upper, lower: data.lower, original: data.original, pair: job.pair, id: Date.now(), speaker: job.speaker };
         addUsage(data.usage.tokens, data.usage.cost);
         if (job.replaceId !== undefined) conversation.replace(job.replaceId, { ...result, id: job.replaceId }); else conversation.append(result);
+        if (job.id !== undefined) setPendingTurns(current => current.filter(item => item.id !== job.id));
         if (job.autoSpeakSide !== undefined) {
           const side = job.autoSpeakSide;
           setAutoSpeech({ id: ++speechSequence.current, text: side === 0 ? result.upper : result.lower, lang: job.pair[side] });
@@ -101,6 +107,7 @@ export function useTranslator() {
       })
       .catch(cause => {
         if (token !== generation.current || !mounted.current) return;
+        if (job.id !== undefined) setPendingTurns(current => current.filter(item => item.id !== job.id));
         const skipped = queue.current.length;
         const message = abort.signal.aborted ? '连接超时，请重试' : cause instanceof TypeError ? '无法连接，请检查网络' : cause.message;
         setError(message + (skipped ? `；后续 ${skipped} 句未发送，请稍后重说` : ''));
@@ -118,16 +125,16 @@ export function useTranslator() {
     queue.current.push(job); setPending(queue.current.length + (pumping.current ? 1 : 0)); pumpRef.current();
   }, [stop]);
   const speakerForSide = (side: 0 | 1): Speaker => (live.current.selfOnTop ? side === 0 : side === 1) ? 'self' : 'other';
-  const start = async (side: 0 | 1) => {
+  const start = async (side: 0 | 1, autoSpeakSide?: 0 | 1, detectSpeaker = true) => {
     const translationKey = live.current.translationProvider === 'deepseek' ? live.current.deepseekKey : live.current.openaiKey;
     if (!live.current.openaiKey.trim() || !translationKey.trim()) { gesture.current.cancel(); sync(); setNeedsSettings(true); return; }
     if (!navigator.onLine) { gesture.current.cancel(); sync(); setError('当前没有网络，请联网后再试'); return; }
     setError(''); setNotice(''); setFailed(undefined); setPhase('permission'); active.current = true;
-    activeCapture.current = { pair: [...live.current.pair], speaker: speakerForSide(side), side, autoSpeakSide: gesture.current.mode === 'hold' ? (1 - side) as 0 | 1 : undefined };
+    activeCapture.current = { pair: [...live.current.pair], speaker: speakerForSide(side), side, autoSpeakSide: autoSpeakSide ?? (gesture.current.mode === 'hold' ? (1 - side) as 0 | 1 : undefined) };
     const attempt = ++recordingRequest.current;
     window.speechSynthesis?.cancel();
     try {
-      const started = await recorder.current!.start(gesture.current.mode === 'continuous' ? 'continuous' : 'hold');
+      const started = await recorder.current!.start(gesture.current.mode === 'continuous' ? 'continuous' : 'hold', detectSpeaker);
       if (attempt !== recordingRequest.current || !active.current || gesture.current.mode === 'idle') return;
       if (!started) { gesture.current.cancel(); sync(); setPhase('ready'); return; }
       setPhase('listening'); navigator.vibrate?.(20);
@@ -140,18 +147,18 @@ export function useTranslator() {
       setError(e.name === 'NotAllowedError' ? '请允许使用麦克风，再重新长按或双击' : e.name === 'NotFoundError' ? '没有找到麦克风，可先输入文字翻译' : e.name === 'NotReadableError' ? '麦克风被占用，请关闭其他录音应用后重试' : e.message || '无法开启麦克风，请重试');
     }
   };
-  const dispatch = (action: 'start' | 'stop' | undefined, side: 0 | 1) => { sync(); if (action === 'start') void start(side); if (action === 'stop') void stop(); };
-  const pointerDown = (event: React.PointerEvent<HTMLButtonElement>, side: 0 | 1) => {
+  const dispatch = (action: 'start' | 'stop' | undefined, side: 0 | 1, autoSpeakSide?: 0 | 1, detectSpeaker = true) => { sync(); if (action === 'start') void start(side, autoSpeakSide, detectSpeaker); if (action === 'stop') void stop(); };
+  const pointerDown = (event: React.PointerEvent<HTMLButtonElement>, side: 0 | 1, autoSpeakSide?: 0 | 1, detectSpeaker = true) => {
     if (!event.isPrimary || event.button !== 0 || pointerOwner.current !== undefined || phase === 'stopping') return false;
     pointerOwner.current = event.pointerId;
     event.currentTarget.setPointerCapture(event.pointerId);
     try { recorder.current?.prepare(); } catch { /* start() reports unavailable audio */ }
     gesture.current.down(performance.now());
-    clearTimeout(holdTimer.current); holdTimer.current = setTimeout(() => dispatch(gesture.current.hold(performance.now()), side), RecordGesture.HOLD_MS + 5);
+    clearTimeout(holdTimer.current); holdTimer.current = setTimeout(() => dispatch(gesture.current.hold(performance.now()), side, autoSpeakSide, detectSpeaker), RecordGesture.HOLD_MS + 5);
     return true;
   };
-  const pointerUp = (event: React.PointerEvent<HTMLButtonElement>, side: 0 | 1) => { if (pointerOwner.current !== event.pointerId) return; pointerOwner.current = undefined; clearTimeout(holdTimer.current); dispatch(gesture.current.up(performance.now()), side); };
-  const toggle = (side: 0 | 1) => { if (pointerOwner.current !== undefined) return; try { recorder.current?.prepare(); } catch {} dispatch(gesture.current.toggle(), side); };
+  const pointerUp = (event: React.PointerEvent<HTMLButtonElement>, side: 0 | 1, autoSpeakSide?: 0 | 1, detectSpeaker = true) => { if (pointerOwner.current !== event.pointerId) return; pointerOwner.current = undefined; clearTimeout(holdTimer.current); dispatch(gesture.current.up(performance.now()), side, autoSpeakSide, detectSpeaker); };
+  const toggle = (side: 0 | 1, autoSpeakSide?: 0 | 1, detectSpeaker = true) => { if (pointerOwner.current !== undefined) return; try { recorder.current?.prepare(); } catch {} dispatch(gesture.current.toggle(), side, autoSpeakSide, detectSpeaker); };
   const dispose = useCallback(() => {
     mounted.current = false; generation.current++; controller.current?.abort();
     clearTimeout(holdTimer.current); clearTimeout(limitTimer.current); window.speechSynthesis?.cancel();
@@ -162,7 +169,7 @@ export function useTranslator() {
       onSentence: (audio, boundary) => {
         if (!mounted.current || document.hidden) return;
         if (boundary === 'speaker-before') { activeCapture.current.side = (1 - activeCapture.current.side) as 0 | 1; activeCapture.current.speaker = speakerForSide(activeCapture.current.side); }
-        enqueue({ audio, pair: [...activeCapture.current.pair], speaker: activeCapture.current.speaker, autoSpeakSide: activeCapture.current.autoSpeakSide });
+        enqueue({ id: ++jobSequence.current, audio, pair: [...activeCapture.current.pair], speaker: activeCapture.current.speaker, sourceSide: activeCapture.current.side, autoSpeakSide: activeCapture.current.autoSpeakSide });
         if (boundary === 'speaker-after') { activeCapture.current.side = (1 - activeCapture.current.side) as 0 | 1; activeCapture.current.speaker = speakerForSide(activeCapture.current.side); }
       },
       onLevel: value => { if (mounted.current) setLevel(value); },
@@ -200,7 +207,7 @@ export function useTranslator() {
     try { localStorage.setItem('lucky-preferences', JSON.stringify({ pair: value, selfOnTop })); } catch {}
   };
   return {
-    pair, selfOnTop, changePair, mode, phase, level, pending, error, notice, history, openaiKey, deepseekKey, translationProvider, usage, usageTotals, multiplier, autoSpeech, addUsage,
+    pair, selfOnTop, changePair, mode, phase, level, pending, pendingTurns, error, notice, history, openaiKey, deepseekKey, translationProvider, usage, usageTotals, multiplier, autoSpeech, addUsage,
     canTranslate: Boolean(translationProvider === 'deepseek' ? deepseekKey : openaiKey),
     setMultiplier: (value: number) => { if (!Number.isFinite(value) || value < .1 || value > 100) return; setMultiplier(value); try { localStorage.setItem('lucky-price-multiplier', String(value)); } catch {} },
     swapSides: () => {
@@ -221,7 +228,7 @@ export function useTranslator() {
       setError(''); setFailed(undefined); setNotice('已从这台设备清除服务密钥');
     },
     failed, retry: () => { if (failed) { setError(''); const job = failed; setFailed(undefined); enqueue(job); } },
-    clear: () => { cancel(); conversation.clear(); setUsage({ tokens: 0, cost: 0 }); setError(''); setFailed(undefined); setNotice('已清空本次对话及用量'); },
+    clear: () => { cancel(); conversation.clear(); setPendingTurns([]); setUsage({ tokens: 0, cost: 0 }); setError(''); setFailed(undefined); setNotice('已清空本次对话及用量'); },
     submitText: (text: string, side: 0 | 1) => { const key = translationProvider === 'deepseek' ? deepseekKey : openaiKey; if (!key) { setNeedsSettings(true); return false; } setError(''); enqueue({ text, pair: [...pair], speaker: speakerForSide(side) }); return true; },
     retranslate: (id: number, text: string) => { const key = translationProvider === 'deepseek' ? deepseekKey : openaiKey; if (!key) { setNeedsSettings(true); return false; } const existing = history.find(item => item.id === id); setError(''); enqueue({ text, pair: [...pair], replaceId: id, speaker: existing?.speaker || 'self' }); return true; },
     stop, toggle, pointerDown, pointerUp, setError, setNotice,

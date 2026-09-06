@@ -67,6 +67,12 @@ test('continuous mode detects a clear speaker pitch change', () => {
   capture.tone(1.6, 110); capture.tone(1.6, 240);
   const speech = capture.messages.filter(m => m.type === 'sentence'); assert.ok(speech.length >= 1); assert.match(speech[0].boundary, /^speaker-/);
 });
+test('single-operator continuous mode keeps a fixed translation direction', () => {
+  const capture = processor(); capture.p.port.onmessage({ data: { type: 'config', mode: 'continuous', detectSpeaker: false } });
+  capture.tone(1.6, 110); capture.tone(1.6, 240);
+  assert.equal(capture.messages.filter(m => m.type === 'sentence').length, 0);
+  capture.feed(5.1, 0); const speech = capture.messages.filter(m => m.type === 'sentence'); assert.equal(speech.length, 1); assert.equal(speech[0].boundary, 'silence');
+});
 test('microphone permission arriving after release cannot start recording', async () => {
   let grant; let stopped = 0;
   const source = await readFile(new URL('../lib/voice-recorder.ts', import.meta.url), 'utf8');
@@ -302,18 +308,20 @@ test('direct key verification calls the selected lightweight provider from the d
     const body = JSON.parse(call.options.body); assert.equal(body.model, 'deepseek-v4-flash'); assert.deepEqual(body.thinking, { type: 'disabled' });
   } finally { globalThis.fetch = oldFetch; }
 });
-test('direct audio uses OpenAI transcription and the selected DeepSeek translation engine', async () => {
-  const oldFetch = globalThis.fetch; const calls = [];
+test('direct audio reveals the complete transcript before requesting its DeepSeek translation', async () => {
+  const oldFetch = globalThis.fetch; const calls = [], events = [];
   globalThis.fetch = async (url, options) => {
-    calls.push({ url, options });
+    calls.push({ url, options }); events.push(url.endsWith('/audio/transcriptions') ? 'transcribe' : 'translate');
     if (url.endsWith('/audio/transcriptions')) return Response.json({ text: '你好', usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 } });
     return Response.json({ choices: [{ finish_reason: 'stop', message: { content: '{"upper":"Hello","lower":"你好"}' } }], usage: { prompt_tokens: 20, completion_tokens: 4, total_tokens: 24, prompt_cache_hit_tokens: 5 } });
   };
   try {
-    const result = await directApi.translateDirect({ audio: new Blob(['RIFFxxxxWAVE'], { type: 'audio/wav' }), pair: ['en', 'zh-CN'], context: [], provider: 'deepseek', openaiKey: 'openai-key', deepseekKey: 'deepseek-key', signal: new AbortController().signal });
+    const result = await directApi.translateDirect({ audio: new Blob(['RIFFxxxxWAVE'], { type: 'audio/wav' }), pair: ['en', 'zh-CN'], context: [], provider: 'deepseek', openaiKey: 'openai-key', deepseekKey: 'deepseek-key', signal: new AbortController().signal, onTranscribed: text => { events.push(`visible:${text}`); } });
     assert.equal(result.original, '你好'); assert.equal(result.upper, 'Hello'); assert.equal(result.lower, '你好');
     assert.deepEqual(calls.map(call => call.url), ['https://api.openai.com/v1/audio/transcriptions', 'https://api.deepseek.com/chat/completions']);
+    assert.deepEqual(events, ['transcribe', 'visible:你好', 'translate']);
     assert.equal(JSON.parse(calls[1].options.body).model, 'deepseek-v4-flash');
+    assert.ok(Math.abs(result.usage.cost - .000025734) < 1e-12);
   } finally { globalThis.fetch = oldFetch; }
 });
 test('direct speech sends the saved playback speed and returns playable audio', async () => {

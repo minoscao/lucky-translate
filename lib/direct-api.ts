@@ -57,8 +57,7 @@ function openAITextUsage(model: string, usage?: ChatUsage): DirectUsage {
 function deepSeekUsage(usage?: ChatUsage): DirectUsage {
   const input = Math.max(0, usage?.prompt_tokens || 0), output = Math.max(0, usage?.completion_tokens || 0);
   const cached = Math.min(input, Math.max(0, usage?.prompt_cache_hit_tokens || 0));
-  const hour = new Date().getUTCHours(), peak = (hour >= 1 && hour < 4) || (hour >= 6 && hour < 10);
-  const rates = peak ? { cached: .014, input: .44, output: 1.32 } : { cached: .007, input: .22, output: .66 };
+  const rates = { cached: .0028, input: .14, output: .28 };
   return { tokens: input + output, cost: ((input - cached) * rates.input + cached * rates.cached + output * rates.output) / 1_000_000 };
 }
 
@@ -83,13 +82,14 @@ async function transcribe(audio: Blob, key: string, signal: AbortSignal) {
   throw new DirectApiError('语音识别暂时不可用');
 }
 
-export async function translateDirect(input: { audio?: Blob; text?: string; pair: Pair; context: string[]; provider: TranslationProvider; openaiKey: string; deepseekKey: string; signal: AbortSignal }) {
+export async function translateDirect(input: { audio?: Blob; text?: string; pair: Pair; context: string[]; provider: TranslationProvider; openaiKey: string; deepseekKey: string; signal: AbortSignal; onTranscribed?: (text: string) => void | Promise<void> }) {
   let source = input.text?.trim() || '', usage: DirectUsage = { tokens: 0, cost: 0 };
   if (input.audio) {
     if (!input.openaiKey) throw new DirectApiError('录音需要先填写 OpenAI 密钥');
     const transcription = await transcribe(input.audio, input.openaiKey, input.signal); source = transcription.text; usage = transcription.usage;
   }
   if (!source) return { empty: true as const, usage };
+  await input.onTranscribed?.(source);
   const key = input.provider === 'deepseek' ? input.deepseekKey : input.openaiKey;
   if (!key) throw new DirectApiError(`请先填写 ${input.provider === 'deepseek' ? 'DeepSeek' : 'OpenAI'} 密钥`);
   const models = input.provider === 'openai' ? OPENAI_MODELS : ['deepseek-v4-flash'] as const;

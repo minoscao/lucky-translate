@@ -14,7 +14,7 @@ export class VoiceRecorder {
     if (!this.context || this.context.state === 'closed') this.context = new AudioContext();
     void this.context.resume().catch(() => {});
   }
-  async start(mode: Exclude<RecordMode, 'idle'> = 'hold') {
+  async start(mode: Exclude<RecordMode, 'idle'> = 'hold', detectSpeaker = true) {
     const token = ++this.generation;
     await this.stopping;
     if (token !== this.generation) return false;
@@ -28,7 +28,7 @@ export class VoiceRecorder {
       await context.audioWorklet.addModule('/voice-processor.js');
       if (token !== this.generation) { stream.getTracks().forEach(track => track.stop()); return false; }
       const node = new AudioWorkletNode(context, 'lucky-voice'); this.node = node;
-      node.port.postMessage({ type: 'config', mode });
+      node.port.postMessage({ type: 'config', mode, detectSpeaker });
       node.port.onmessage = ({ data }) => {
         if (data.type === 'flushed') { this.finish?.(); return; }
         if (token !== this.generation) return;
