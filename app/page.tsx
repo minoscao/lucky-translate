@@ -118,6 +118,7 @@ export default function Home() {
   const [editingId, setEditingId] = useState<number>();
   const [voiceId, setVoiceId] = useState(''), [consentAudio, setConsentAudio] = useState<Blob>(), [sampleAudio, setSampleAudio] = useState<Blob>();
   const [voiceCreating, setVoiceCreating] = useState(false);
+  const [checkingKey, setCheckingKey] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const playedSpeech = useRef(0);
   const voiceOfferChecked = useRef(false);
@@ -216,6 +217,20 @@ export default function Home() {
     finally { setVoiceCreating(false); }
   };
   const chooseDefaultVoice = () => { localStorage.setItem('lucky-voice-setup-dismissed', '1'); setConsentAudio(undefined); setSampleAudio(undefined); setDialog(null); };
+  const saveSettings = async (event: React.SyntheticEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const key = draftKey.trim(), nextMultiplier = Number(draftMultiplier);
+    if (!key || /[\r\n]/.test(key) || key.length > 512) { setFormError('请填写有效的服务密钥'); return; }
+    if (!Number.isFinite(nextMultiplier) || nextMultiplier < .1 || nextMultiplier > 100) { setFormError('倍率请输入 0.1 到 100'); return; }
+    setCheckingKey(true); setFormError('');
+    try {
+      const response = await fetch('/api/key', { method: 'POST', headers: { 'x-translation-key': key } });
+      const data = await response.json().catch(() => ({})) as { valid?: boolean; error?: string };
+      if (!response.ok || !data.valid) throw new Error(data.error || '无法验证服务密钥');
+      t.setMultiplier(nextMultiplier); t.setCredential(key); t.setNeedsSettings(false); setDialog(null);
+    } catch (cause) { setFormError(cause instanceof Error ? cause.message : '无法验证服务密钥'); }
+    finally { setCheckingKey(false); }
+  };
   const unlock = async (event: React.SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault(); if (!accessPassword || unlocking) return;
     setUnlocking(true); setAccessError('');
@@ -266,7 +281,7 @@ export default function Home() {
       </DialogDescription></DialogHeader>
       <DialogClose render={<Button variant="ghost" className="dialog-close" aria-label="关闭" />}><X /></DialogClose>
       {visibleDialog === 'name' && <form onSubmit={event => { event.preventDefault(); saveName(draftName); }}><label htmlFor="display-name" className="field-label">你的名字 / Your name</label><Input id="display-name" className="app-input" value={draftName} onChange={event => setDraftName(event.target.value)} placeholder="Me" maxLength={24} autoComplete="nickname" /><p className="field-note">只保存在这台设备，下次自动使用。</p><Button type="submit" className="form-submit">{draftName.trim() ? '记住名字，开始对话' : '使用 Me，开始对话'}</Button></form>}
-      {visibleDialog === 'settings' && <form onSubmit={event => { event.preventDefault(); const nextMultiplier = Number(draftMultiplier); if (!draftKey.trim() || /[\r\n]/.test(draftKey) || draftKey.length > 512) { setFormError('请填写有效的服务密钥'); return; } if (!Number.isFinite(nextMultiplier) || nextMultiplier < .1 || nextMultiplier > 100) { setFormError('倍率请输入 0.1 到 100'); return; } t.setMultiplier(nextMultiplier); t.setCredential(draftKey); t.setNeedsSettings(false); setDialog(null); }}>
+      {visibleDialog === 'settings' && <form onSubmit={saveSettings}>
         <div className="profile-setting"><span>{ownName}</span><Button type="button" variant="ghost" onClick={() => open('name')}>修改名字</Button></div>
         <div className="profile-setting"><span>{voiceId ? '已使用我的声音' : '内置 AI 声音'}</span><Button type="button" variant="ghost" onClick={() => { setConsentAudio(undefined); setSampleAudio(undefined); open('voice'); }}>{voiceId ? '重新录制' : '训练我的声音'}</Button></div>
         <label className="field-label" htmlFor="service-key">OpenAI 服务密钥</label>
@@ -277,7 +292,7 @@ export default function Home() {
         <p className="field-note">当前为 ×{t.multiplier.toFixed(1)}。例如实际费用 $1.00，倍率 2.0 时显示 $2.00。</p>
         <details className="inline-help"><summary>轻量模型与费用<ChevronDown /></summary><p>优先使用 gpt-4o-mini；仅在模型停用或不可用时，依次尝试 gpt-4.1-nano、gpt-5-nano。不会调用 6.0 或自动升级到大型模型。</p><p>语音识别优先用 gpt-4o-mini-transcribe，不可用时用 whisper-1。需要有可用额度的 OpenAI API 密钥，费用由该账户承担。网页不保存录音和对话。</p></details>
         {formError && <p role="alert" className="form-error">{formError}</p>}
-        <div className="credential-actions"><Button type="submit" className="form-submit">保存到本设备并开始</Button>{t.credential && <Button type="button" variant="ghost" className="clear-key" onClick={() => { t.clearCredential(); setDraftKey(''); }}>清除已保存密钥</Button>}<Button type="button" variant="ghost" className="clear-key" onClick={() => { void fetch('/api/unlock', { method: 'DELETE', credentials: 'same-origin' }); setDialog(null); setAccess('locked'); }}>锁定网站</Button></div>
+        <div className="credential-actions"><Button type="submit" className="form-submit" disabled={checkingKey}>{checkingKey ? <><LoaderCircle className="spinning" />正在验证密钥</> : '验证并保存到本设备'}</Button>{t.credential && <Button type="button" variant="ghost" className="clear-key" onClick={() => { t.clearCredential(); setDraftKey(''); }}>清除已保存密钥</Button>}<Button type="button" variant="ghost" className="clear-key" onClick={() => { void fetch('/api/unlock', { method: 'DELETE', credentials: 'same-origin' }); setDialog(null); setAccess('locked'); }}>锁定网站</Button></div>
       </form>}
       {visibleDialog === 'text' && <form onSubmit={event => { event.preventDefault(); if (!draftText.trim()) { setFormError('请输入想说的话'); return; } if (t.submitText(draftText.trim(), dialogSide)) setDialog(null); }}>
         <label className="field-label" htmlFor="typed-text">想说的话</label><Textarea id="typed-text" className="app-input text-input" value={draftText} maxLength={2000} onChange={event => setDraftText(event.target.value)} placeholder="在这里输入…" />

@@ -251,6 +251,31 @@ test('voice setup uploads consent before the sample and returns the custom voice
   } finally { globalThis.fetch = oldFetch; }
 });
 
+const keySource = await readFile(new URL('../app/api/key/route.ts', import.meta.url), 'utf8');
+const keyJs = ts.transpile(keySource, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext });
+const keyRoute = await import('data:text/javascript;base64,' + Buffer.from(keyJs).toString('base64'));
+function keyRequest(key = 'test-only-not-a-real-key') {
+  return new Request('https://translator.test/api/key', { method: 'POST', headers: { Origin: 'https://translator.test', 'x-translation-key': key } });
+}
+test('key verification checks the economical model without making a paid generation request', async () => {
+  const oldFetch = globalThis.fetch; let call;
+  globalThis.fetch = async (url, options) => { call = { url, options }; return Response.json({ id: 'gpt-4o-mini' }); };
+  try {
+    const response = await keyRoute.POST(keyRequest()); assert.equal(response.status, 200); assert.deepEqual(await response.json(), { valid: true });
+    assert.equal(call.url, 'https://api.openai.com/v1/models/gpt-4o-mini'); assert.equal(call.options.method, 'GET');
+    assert.equal(call.options.headers.Authorization, 'Bearer test-only-not-a-real-key');
+  } finally { globalThis.fetch = oldFetch; }
+});
+test('key verification explains invalid credentials and quota limits', async () => {
+  const oldFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => Response.json({ error: {} }, { status: 401 });
+    const invalid = await keyRoute.POST(keyRequest()); assert.equal(invalid.status, 401); assert.match((await invalid.json()).error, /无效/);
+    globalThis.fetch = async () => Response.json({ error: {} }, { status: 429 });
+    const limited = await keyRoute.POST(keyRequest()); assert.equal(limited.status, 429); assert.match((await limited.json()).error, /额度/);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
 const unlockSource = await readFile(new URL('../app/api/unlock/route.ts', import.meta.url), 'utf8');
 const unlockJs = ts.transpile(unlockSource, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext });
 const unlockRoute = await import('data:text/javascript;base64,' + Buffer.from(unlockJs).toString('base64'));
