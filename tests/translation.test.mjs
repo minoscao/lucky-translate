@@ -93,14 +93,19 @@ test('microphone permission arriving after release cannot start recording', asyn
 });
 
 test('managed service architecture keeps API keys on the server and uses the configured lightweight models', async () => {
-  const [deepseek, translate, speech] = await Promise.all([
+  const [deepseek, translate, transcribe, speech, audio] = await Promise.all([
     readFile(new URL('../lib/server/deepseek.ts', import.meta.url), 'utf8'),
     readFile(new URL('../app/api/translate/route.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../app/api/transcribe/route.ts', import.meta.url), 'utf8'),
     readFile(new URL('../app/api/speech/route.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/server/audio.ts', import.meta.url), 'utf8'),
   ]);
   assert.match(deepseek, /model: 'deepseek-v4-flash'/);
   assert.doesNotMatch(deepseek, /gpt-6|openai\.com/);
   assert.match(translate, /@cf\/openai\/whisper-large-v3-turbo/);
+  assert.match(translate, /audioToBase64\(audioBytes\)/);
+  assert.match(transcribe, /audioToBase64\(bytes\)/);
+  assert.match(audio, /return btoa\(parts\.join\(''\)\)/);
   assert.match(speech, /@cf\/myshell-ai\/melotts/);
 });
 

@@ -34,7 +34,7 @@ export async function deepSeekConfigured() {
 
 export async function getCoachSkill() {
   const row = await getDb().prepare("SELECT value FROM app_config WHERE key = 'coach_skill'").first<{ value: string }>();
-  return row?.value?.trim() || DEFAULT_COACH_SKILL;
+  return row?.value?.trim().replace(/^You are Luna,/, 'You are Lucky,') || DEFAULT_COACH_SKILL;
 }
 
 export async function setCoachSkill(value: string) {

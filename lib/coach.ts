@@ -23,7 +23,7 @@ export type CoachLevelAssessment = {
 
 export const EMPTY_COACH_MEMORY: CoachMemory = { level: 'discovering', topics: [], strengths: [], focus: [], phrases: [] };
 
-export const DEFAULT_COACH_SKILL = `You are Luna, an affectionate and adaptive English conversation coach. Practice is in English only. Follow the learner's real topic and latest clear intent. This is a natural conversation, never a quiz, test, or grammar lecture. Respond to the meaning first and leave most of the speaking opportunity to the learner.
+export const DEFAULT_COACH_SKILL = `You are Lucky, an affectionate and adaptive English conversation coach. Practice is in English only. Follow the learner's real topic and latest clear intent. This is a natural conversation, never a quiz, test, or grammar lecture. Respond to the meaning first and leave most of the speaking opportunity to the learner.
 Treat a self-reported level or IELTS score as a starting point and verify it across several turns. Adapt chiefly to the learner's actual clear turns: their length, comprehension, vocabulary range, and whether they can continue without help. For IELTS 1–3, keep every turn to one tiny idea: one short response and at most one easy question, using familiar words and usually 8–18 words total. For IELTS 4–5, keep replies concise, ask one question at a time, and add detail only after the learner handles the previous turn comfortably. For IELTS 6 or above, use richer language and deeper questions by default. Never lower the assumed level because of one short answer or one transcription-looking mistake, and never make a low-level learner feel tested or overwhelmed. Increase complexity gradually only when several clear turns show readiness. Introduce a few precise, useful expressions naturally in context and explain them in simple English when asked.
 Use one or two precise expressions that fit the topic, and mark those expressions with **double asterisks** so the learner can notice them. Do not pile on difficult vocabulary or require immediate repetition. Correct at most one meaningful issue when it helps the current conversation, then return to the topic. Never rewrite the learner's whole answer. If wording may be a transcription error, confirm the intended meaning rather than judging ability from it. When the learner is stuck, first invite one detail; only then offer the smallest useful sentence beginning, insertion point, or blank using their own words. Do not trigger scaffolds merely because a reply is short.
 Keep reply under 55 words and tip under 20 words. Update compact learner memory with interests, experiences, goals, repeated difficulty and useful expressions without sounding as if you are reading a database.`;
@@ -67,7 +67,7 @@ export async function coachReplyDirect(input: { key: string; history: CoachMessa
   const task = input.newSession
     ? `Start a fresh ordinary open conversation. Do not announce a level or lesson. Learner memory: ${JSON.stringify(input.memory)}`
     : `Private learner memory: ${JSON.stringify(input.memory)}\nLearner-turn signal: ${input.turnStatus}. Respond to the learner's latest message.`;
-  return coachRequest<{ reply: string; tip: string; memory: CoachMemory }>(input.key, [{ role: 'system', content: DEFAULT_COACH_SKILL }, ...history, { role: 'user', content: task }], 'luna_coach_turn', schema, input.signal);
+  return coachRequest<{ reply: string; tip: string; memory: CoachMemory }>(input.key, [{ role: 'system', content: DEFAULT_COACH_SKILL }, ...history, { role: 'user', content: task }], 'lucky_coach_turn', schema, input.signal);
 }
 
 export async function coachPracticeDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; signal: AbortSignal }) {
@@ -86,7 +86,7 @@ For each meaning question: prompt is one useful word from the conversation, answ
 For each grammar question: prompt briefly asks the learner to choose the most natural sentence for an idea or pattern from their own conversation, answer is the correct complete sentence, options contains exactly three English sentences, initial and definition are empty. explanation briefly explains the grammar in plain English.
 Do not test facts. Do not introduce unrelated advanced vocabulary. Keep everything in English.
 Learner memory: ${JSON.stringify(input.memory)}\nConversation:\n${transcript}`;
-  return coachRequest<{ title: string; exercises: CoachExercise[] }>(input.key, [{ role: 'system', content: 'You create concise, fair English practice from a learner\'s own conversation. Return only the requested JSON.' }, { role: 'user', content: prompt }], 'luna_session_practice', schema, input.signal);
+  return coachRequest<{ title: string; exercises: CoachExercise[] }>(input.key, [{ role: 'system', content: 'You create concise, fair English practice from a learner\'s own conversation. Return only the requested JSON.' }, { role: 'user', content: prompt }], 'lucky_session_practice', schema, input.signal);
 }
 
 const vocabularySchema = {
@@ -121,7 +121,7 @@ Learner memory: ${JSON.stringify(input.memory)}
 Existing recall from earlier conversations today (merge rather than repeat): ${JSON.stringify(input.existing || null)}
 Conversation:
 ${transcript}`;
-  return coachRequest<Omit<CoachDailySummary, 'id' | 'date' | 'minutes'>>(input.key, [{ role: 'system', content: 'You make evidence-based daily English learning recalls. Return only the requested JSON.' }, { role: 'user', content: prompt }], 'luna_daily_recall', schema, input.signal);
+  return coachRequest<Omit<CoachDailySummary, 'id' | 'date' | 'minutes'>>(input.key, [{ role: 'system', content: 'You make evidence-based daily English learning recalls. Return only the requested JSON.' }, { role: 'user', content: prompt }], 'lucky_daily_recall', schema, input.signal);
 }
 
 export async function coachWeeklySummaryDirect(input: { key: string; daily: CoachDailySummary[]; signal: AbortSignal }) {
@@ -137,7 +137,7 @@ export async function coachWeeklySummaryDirect(input: { key: string; daily: Coac
   const prompt = `Combine these daily English learning recalls into one weekly recall. Write everything in clear English. Show concrete progress, recurring weaknesses, and next priorities. Deduplicate vocabulary and grammar. Keep the most useful English definitions and English examples. Do not add claims unsupported by the daily records.
 Daily recalls:
 ${JSON.stringify(input.daily).slice(0, 18000)}`;
-  return coachRequest<Omit<CoachWeeklySummary, 'id' | 'startDate' | 'endDate' | 'minutes'>>(input.key, [{ role: 'system', content: 'You consolidate daily English recalls into a concise weekly learning record. Return only the requested JSON.' }, { role: 'user', content: prompt }], 'luna_weekly_recall', schema, input.signal);
+  return coachRequest<Omit<CoachWeeklySummary, 'id' | 'startDate' | 'endDate' | 'minutes'>>(input.key, [{ role: 'system', content: 'You consolidate daily English learning recalls into a concise weekly learning record. Return only the requested JSON.' }, { role: 'user', content: prompt }], 'lucky_weekly_recall', schema, input.signal);
 }
 
 export async function coachLevelAssessmentDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; signal: AbortSignal }) {
@@ -149,5 +149,5 @@ export async function coachLevelAssessmentDirect(input: { key: string; history: 
   };
   const transcript = input.history.filter(message => message.role === 'learner').map(message => `Learner: ${message.text}`).join('\n').slice(-16000);
   const prompt = `Estimate the learner's current practical IELTS band from the learner turns below and their memory. This is an internal coaching reference, not an official IELTS score. Use the standard IELTS 1–9 scale. Write concise, constructive English. Assess only clear recurring evidence; do not penalize likely speech-recognition noise, isolated slips, or one-off recording artefacts. For a self-reported IELTS 7 or 8, require strong repeated evidence before estimating lower. Give one short assessment for grammar, vocabulary, fluency, and a plain final conclusion.\nLearner memory: ${JSON.stringify(input.memory)}\nLearner turns:\n${transcript}`;
-  return coachRequest<Omit<CoachLevelAssessment, 'id' | 'createdAt'>>(input.key, [{ role: 'system', content: 'You make careful, evidence-based IELTS-style coaching assessments. Return only the requested JSON.' }, { role: 'user', content: prompt }], 'luna_level_assessment', schema, input.signal);
+  return coachRequest<Omit<CoachLevelAssessment, 'id' | 'createdAt'>>(input.key, [{ role: 'system', content: 'You make careful, evidence-based IELTS-style coaching assessments. Return only the requested JSON.' }, { role: 'user', content: prompt }], 'lucky_level_assessment', schema, input.signal);
 }

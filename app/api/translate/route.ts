@@ -1,6 +1,7 @@
 import { getAi } from '@/db';
 import { recordServiceCost } from '@/lib/server/account';
 import { requireAccount } from '@/lib/server/auth';
+import { audioToBase64 } from '@/lib/server/audio';
 import { deepSeekJson } from '@/lib/server/deepseek';
 import { json, sameOrigin } from '@/lib/server/http';
 import { CONTEXT_LIMITS, LANGUAGES } from '@/lib/translation';
@@ -42,7 +43,7 @@ export async function POST(request: Request) {
       if (!audio.size || audio.size > MAX_UPLOAD - 4096 || !['audio/wav', 'audio/x-wav'].includes(audio.type)) return json({ error: '录音格式不支持，请重新录音' }, 400);
       const ai = getAi(); if (!ai) return json({ error: 'Cloudflare 语音识别尚未连接，请联系管理员' }, 503);
       const audioBytes = new Uint8Array(await audio.arrayBuffer()), seconds = Math.max(0, audioBytes.byteLength - 44) / 32000;
-      const result = await ai.run('@cf/openai/whisper-large-v3-turbo', { audio: Array.from(audioBytes), task: 'transcribe', vad_filter: true, condition_on_previous_text: true }) as { text?: string; transcription_info?: { text?: string } };
+      const result = await ai.run('@cf/openai/whisper-large-v3-turbo', { audio: audioToBase64(audioBytes), task: 'transcribe', vad_filter: true, condition_on_previous_text: true }) as { text?: string; transcription_info?: { text?: string } };
       original = result.text || result.transcription_info?.text || '';
       speechCost = seconds / 60 * .00051;
       await recordServiceCost(account, '语音识别', 'cloudflare', 'whisper-large-v3-turbo', speechCost, { usdPerMinute: .00051, seconds });
