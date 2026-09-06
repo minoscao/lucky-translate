@@ -36,30 +36,22 @@ const memorySchema = {
   },
 };
 
-function usageCost(usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } }): CoachUsage {
-  const input = Math.max(0, usage?.prompt_tokens || 0), output = Math.max(0, usage?.completion_tokens || 0);
-  const cached = Math.min(input, Math.max(0, usage?.prompt_tokens_details?.cached_tokens || 0));
-  return { tokens: usage?.total_tokens || input + output, cost: ((input - cached) * .15 + cached * .075 + output * .6) / 1_000_000 };
-}
-
-async function coachRequest<T>(key: string, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, schemaName: string, schema: object, signal: AbortSignal): Promise<{ data: T; usage: CoachUsage }> {
+async function coachRequest<T>(_key: string, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, _schemaName: string, _schema: object, signal: AbortSignal): Promise<{ data: T; usage: CoachUsage }> {
   let response: Response;
   try {
-    response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST', signal, headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'gpt-4o-mini', messages, max_tokens: 1800, response_format: { type: 'json_schema', json_schema: { name: schemaName, strict: true, schema } } }),
+    response = await fetch('/api/coach', {
+      method: 'POST', credentials: 'same-origin', signal, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages, maxTokens: 1800 }),
     });
   } catch { throw new Error('无法连接 English Coach，请检查网络'); }
   if (!response.ok) {
-    if (response.status === 401) throw new Error('OpenAI 密钥无效，请在设置中重新填写');
-    if (response.status === 403) throw new Error('当前网络或账户无法使用 English Coach');
-    if (response.status === 429) throw new Error('OpenAI 额度不足或请求较多');
-    throw new Error('English Coach 暂时无法回应');
+    const detail = await response.json().catch(() => null) as { error?: string } | null;
+    throw new Error(detail?.error || 'English Coach 暂时无法回应');
   }
-  const result = await response.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: Parameters<typeof usageCost>[0] };
-  const content = result.choices?.[0]?.message?.content;
+  const result = await response.json() as { content?: string; usage?: CoachUsage };
+  const content = result.content;
   if (!content) throw new Error('English Coach 没有返回完整内容');
-  try { return { data: JSON.parse(content) as T, usage: usageCost(result.usage) }; }
+  try { return { data: JSON.parse(content) as T, usage: result.usage || { tokens: 0, cost: 0 } }; }
   catch { throw new Error('English Coach 返回内容不完整，请重试'); }
 }
 

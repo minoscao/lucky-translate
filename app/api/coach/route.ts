@@ -1,0 +1,19 @@
+import { requireAccount } from '@/lib/server/auth';
+import { deepSeekJson, DeepSeekMessage } from '@/lib/server/deepseek';
+import { json, readJson, sameOrigin } from '@/lib/server/http';
+
+export async function POST(request: Request) {
+  if (!sameOrigin(request)) return json({ error: '请从 English Coach 页面发起请求' }, 403);
+  try {
+    const account = await requireAccount(request), body = await readJson<{ messages?: unknown; maxTokens?: unknown }>(request, 48 * 1024);
+    if (!Array.isArray(body.messages) || body.messages.length < 1 || body.messages.length > 20) return json({ error: '对话内容无效' }, 400);
+    const messages: DeepSeekMessage[] = [];
+    for (const item of body.messages) {
+      const row = item as { role?: unknown; content?: unknown };
+      if (!['system', 'user', 'assistant'].includes(String(row.role)) || typeof row.content !== 'string' || row.content.length > 20_000) return json({ error: '对话内容无效' }, 400);
+      messages.push({ role: row.role as DeepSeekMessage['role'], content: row.content });
+    }
+    const result = await deepSeekJson(account, '英语训练', messages, request.signal, Math.max(200, Math.min(3000, Number(body.maxTokens) || 1800)));
+    return json({ content: result.content, usage: result.usage });
+  } catch (error) { return json({ error: error instanceof Error ? error.message : 'English Coach 暂时无法回应' }, (error as { status?: number }).status || 500); }
+}

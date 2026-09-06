@@ -1,28 +1,3 @@
-const reply = (body: object, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
+import { json } from '@/lib/server/http';
 
-export async function POST(request: Request) {
-  const origin = request.headers.get('origin');
-  if (origin && origin !== new URL(request.url).origin) return reply({ error: '请从翻译页面发起请求' }, 403);
-  const key = request.headers.get('x-translation-key')?.trim();
-  if (!key || key.length > 512 || /[\r\n]/.test(key)) return reply({ error: '请填写有效的 OpenAI 服务密钥' }, 401);
-  try {
-    // Verify the exact API path used by translation. Model metadata access can be
-    // restricted independently and caused working project keys to be rejected.
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST', redirect: 'manual', signal: AbortSignal.any([request.signal, AbortSignal.timeout(20000)]),
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'OK' }], max_tokens: 1 }),
-    });
-    if (response.ok) return reply({ valid: true });
-    const detail = await response.json().catch(() => null) as { error?: { code?: string } } | null;
-    if (response.status === 401) return reply({ error: '这个服务密钥无效，请重新复制完整密钥' }, 401);
-    if (response.status === 403 && detail?.error?.code === 'unsupported_country_region_territory') return reply({ error: '当前云端节点所在地区暂不受支持，请稍后重试' }, 503);
-    if (response.status === 403) return reply({ error: 'OpenAI 拒绝了这个项目的请求，请检查项目权限' }, 403);
-    if (response.status === 404) return reply({ error: '当前项目暂时无法调用轻量翻译模型' }, 404);
-    if (response.status === 429) return reply({ error: '密钥有效，但当前账户额度不足或请求较多' }, 429);
-    return reply({ error: '暂时无法验证密钥，请稍后重试' }, 502);
-  } catch (error) {
-    if (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name)) return reply({ error: '验证密钥超时，请检查网络后重试' }, 504);
-    return reply({ error: '无法连接 OpenAI 验证密钥，请稍后重试' }, 502);
-  }
-}
+export async function POST() { return json({ error: '服务密钥由管理员统一配置，客户不需要填写' }, 410); }

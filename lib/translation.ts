@@ -38,6 +38,7 @@ export function createConversationStore() {
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     append: (item: Translation) => { items = [...items, item]; publish(); },
     replace: (id: number, item: Translation) => { items = items.map(current => current.id === id ? item : current); publish(); },
+    replaceAll: (next: Translation[]) => { items = [...next]; publish(); },
     clear: () => { items = []; publish(); },
     context: (beforeId?: number) => {
       const eligible = beforeId === undefined ? items : items.slice(0, items.findIndex(item => item.id === beforeId));

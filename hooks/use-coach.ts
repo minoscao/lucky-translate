@@ -8,6 +8,7 @@ import {
 } from '@/lib/coach';
 import { transcribeDirect } from '@/lib/direct-api';
 import { VoiceRecorder } from '@/lib/voice-recorder';
+import { saveCloudRecord } from '@/lib/account';
 
 type UsageHandler = (tokens: number, cost: number) => void;
 type CoachJournal = { todayDate: string; todaySeconds: number; daily: CoachDailySummary[]; weekly: CoachWeeklySummary[] };
@@ -34,19 +35,20 @@ const readJournal = (): CoachJournal => {
   } catch { return emptyJournal(); }
 };
 
-export function useCoach(openaiKey: string, addUsage: UsageHandler, active = false) {
+export function useCoach(_serviceKey: string, addUsage: UsageHandler, active = false) {
   const [history, setHistory] = useState<CoachMessage[]>([]), [memory, setMemory] = useState<CoachMemory>(EMPTY_COACH_MEMORY);
   const [busy, setBusy] = useState(false), [recording, setRecording] = useState(false), [error, setError] = useState(''), [tip, setTip] = useState('');
   const [practice, setPractice] = useState<{ title: string; exercises: CoachExercise[] }>(), [speechRequest, setSpeechRequest] = useState<{ id: number; text: string }>();
   const [journal, setJournal] = useState<CoachJournal>(emptyJournal);
-  const recorder = useRef<VoiceRecorder | undefined>(undefined), abort = useRef<AbortController | undefined>(undefined), keyRef = useRef(openaiKey), usageRef = useRef(addUsage);
+  const recorder = useRef<VoiceRecorder | undefined>(undefined), abort = useRef<AbortController | undefined>(undefined), keyRef = useRef('managed'), usageRef = useRef(addUsage);
   const historyRef = useRef<CoachMessage[]>([]), memoryRef = useRef<CoachMemory>(EMPTY_COACH_MEMORY), busyRef = useRef(false), recordingRef = useRef(false), journalRef = useRef<CoachJournal>(emptyJournal());
+  const cloudReady = useRef(false);
   const messageId = useRef(0), speechId = useRef(0);
-  keyRef.current = openaiKey; usageRef.current = addUsage;
+  usageRef.current = addUsage;
   const setBusyState = (value: boolean) => { busyRef.current = value; setBusy(value); };
   const setRecordingState = (value: boolean) => { recordingRef.current = value; setRecording(value); };
-  const saveSession = (messages: CoachMessage[], nextMemory: CoachMemory) => { try { localStorage.setItem('lucky-coach-state', JSON.stringify({ history: messages.slice(-40), memory: nextMemory })); } catch {} };
-  const saveJournal = useCallback((next: CoachJournal) => { journalRef.current = next; setJournal(next); try { localStorage.setItem(JOURNAL_KEY, JSON.stringify(next)); } catch {} }, []);
+  const saveSession = (messages: CoachMessage[], nextMemory: CoachMemory) => { const data = { history: messages.slice(-80), memory: nextMemory }; try { localStorage.setItem('lucky-coach-state', JSON.stringify(data)); } catch {} if (cloudReady.current) void saveCloudRecord('coach-state', 'coach-state', data).catch(() => {}); };
+  const saveJournal = useCallback((next: CoachJournal) => { journalRef.current = next; setJournal(next); try { localStorage.setItem(JOURNAL_KEY, JSON.stringify(next)); } catch {} if (cloudReady.current) void saveCloudRecord('coach-journal', 'coach-journal', next).catch(() => {}); }, []);
   const updateHistory = (messages: CoachMessage[]) => { historyRef.current = messages; setHistory(messages); };
   const updateMemory = (nextMemory: CoachMemory) => { memoryRef.current = nextMemory; setMemory(nextMemory); };
 
@@ -59,7 +61,14 @@ export function useCoach(openaiKey: string, addUsage: UsageHandler, active = fal
       }
       if (stored?.memory) updateMemory(cleanMemory(stored.memory));
     } catch {}
-    saveJournal(readJournal());
+    const localJournal = readJournal(); journalRef.current = localJournal; setJournal(localJournal);
+    void fetch('/api/cloud', { credentials: 'same-origin' }).then(async response => response.ok ? await response.json() as { records?: Array<{ id: string; data: unknown }> } : null).then(payload => {
+      const state = payload?.records?.find(record => record.id === 'coach-state')?.data as { history?: CoachMessage[]; memory?: CoachMemory } | undefined;
+      const remoteJournal = payload?.records?.find(record => record.id === 'coach-journal')?.data as CoachJournal | undefined;
+      if (Array.isArray(state?.history)) { const messages = state.history.filter(item => (item?.role === 'learner' || item?.role === 'coach') && typeof item.text === 'string').slice(-80); updateHistory(messages); messageId.current = Math.max(0, ...messages.map(item => Number(item.id) || 0)); }
+      if (state?.memory) updateMemory(cleanMemory(state.memory));
+      if (remoteJournal?.todayDate && Array.isArray(remoteJournal.daily) && Array.isArray(remoteJournal.weekly)) { journalRef.current = remoteJournal; setJournal(remoteJournal); }
+    }).catch(() => {}).finally(() => { cloudReady.current = true; });
   }, [saveJournal]);
 
   useEffect(() => {
@@ -77,7 +86,6 @@ export function useCoach(openaiKey: string, addUsage: UsageHandler, active = fal
   }, [active, saveJournal]);
 
   const requestReply = useCallback(async (messages: CoachMessage[], nextMemory: CoachMemory, turnStatus: string, newSession = false) => {
-    if (!keyRef.current) { setError('English Coach 需要 OpenAI 密钥'); return false; }
     abort.current?.abort(); const controller = new AbortController(); abort.current = controller; setBusyState(true); setError(''); setTip('');
     try {
       const result = await coachReplyDirect({ key: keyRef.current, history: messages, memory: nextMemory, turnStatus, newSession, signal: controller.signal });
@@ -118,20 +126,20 @@ export function useCoach(openaiKey: string, addUsage: UsageHandler, active = fal
 
   const beginSession = useCallback(async () => { abort.current?.abort(); setPractice(undefined); updateHistory([]); setTip(''); return requestReply([], memoryRef.current, 'new session', true); }, [requestReply]);
   const startRecording = useCallback(async () => {
-    if (!keyRef.current || busyRef.current || recordingRef.current) { if (!keyRef.current) setError('English Coach 需要 OpenAI 密钥'); return false; }
+    if (busyRef.current || recordingRef.current) return false;
     setError(''); const started = await recorder.current?.start('hold', false).catch(cause => { setError(cause instanceof Error ? cause.message : '无法开启麦克风'); return false; });
     setRecordingState(Boolean(started)); return Boolean(started);
   }, []);
   const stopRecording = useCallback(async () => { if (!recordingRef.current) return; setRecordingState(false); await recorder.current?.stop(); }, []);
   const createPractice = useCallback(async () => {
-    if (!keyRef.current || busyRef.current) { if (!keyRef.current) setError('练习需要 OpenAI 密钥'); return false; }
+    if (busyRef.current) return false;
     const controller = new AbortController(); abort.current = controller; setBusyState(true); setError('');
     try { const result = await coachPracticeDirect({ key: keyRef.current, history: historyRef.current, memory: memoryRef.current, signal: controller.signal }); setPractice(result.data); usageRef.current(result.usage.tokens, result.usage.cost); return true; }
     catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '无法生成练习'); return false; }
     finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
   }, []);
   const summarizeToday = useCallback(async () => {
-    if (!keyRef.current || busyRef.current) { if (!keyRef.current) setError('总结需要 OpenAI 密钥'); return undefined; }
+    if (busyRef.current) return undefined;
     if (!historyRef.current.some(message => message.role === 'learner')) { setError('先完成一小段对话，再生成今日总结'); return undefined; }
     const controller = new AbortController(); abort.current = controller; setBusyState(true); setError('');
     try {

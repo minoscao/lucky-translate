@@ -2,18 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
-import { ArrowDownUp, ArrowLeft, ArrowUpFromLine, Check, ChevronDown, ChevronUp, CircleHelp, Copy, Download, History, LoaderCircle, LockKeyhole, Mic, Settings2, ShieldCheck, Square, Volume2, X } from 'lucide-react';
+import { ArrowDownUp, ArrowLeft, ArrowUpFromLine, Check, ChevronDown, ChevronUp, CircleHelp, Copy, Download, History, LoaderCircle, LockKeyhole, LogOut, Mic, Settings2, ShieldCheck, Square, Volume2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { AudioSampleRecorder } from '@/components/audio-sample-recorder';
 import { CoachMode } from '@/components/coach-mode';
 import { INTERFACE_COPY } from '@/lib/interface-copy';
 import { useCoach } from '@/hooks/use-coach';
 import { useTranslator } from '@/hooks/use-translator';
-import { createCustomVoiceDirect, DirectApiError, synthesizeSpeechDirect, TranslationProvider, verifyDirectKey } from '@/lib/direct-api';
+import { synthesizeSpeechDirect } from '@/lib/direct-api';
+import { AccountSnapshot, accountRequest, saveCloudRecord } from '@/lib/account';
 import { LANGUAGES, LanguageCode, Pair, RecordGesture, conversationText, language, selectLanguage, transcriptForLanguage } from '@/lib/translation';
 
 type InstallEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
@@ -140,34 +140,30 @@ function SoloDirectionControls({ controller: t, direction, selfSide, otherSide, 
 export default function Home() {
   const t = useTranslator();
   const [appMode, setAppMode] = useState<AppMode | null>(null);
-  const coach = useCoach(t.openaiKey, t.addUsage, appMode === 'coach');
-  const [access, setAccess] = useState<'checking' | 'locked' | 'unlocked'>('checking');
+  const coach = useCoach('managed', t.addUsage, appMode === 'coach');
+  const [account, setAccount] = useState<AccountSnapshot | null>();
   const [settingsReturnMode, setSettingsReturnMode] = useState<AppMode | null>(null);
   const [coachEntryStage, setCoachEntryStage] = useState<'chat' | 'dashboard'>('chat');
-  const [accessPassword, setAccessPassword] = useState(''), [accessError, setAccessError] = useState('');
-  const [unlocking, setUnlocking] = useState(false);
-  const [dialog, setDialog] = useState<'settings' | 'help' | 'history' | 'text' | 'edit' | 'name' | 'voice' | 'usage' | null>(null);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authEmail, setAuthEmail] = useState(''), [authUsername, setAuthUsername] = useState(''), [authPassword, setAuthPassword] = useState(''), [authError, setAuthError] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+  const [dialog, setDialog] = useState<'settings' | 'help' | 'history' | 'text' | 'edit' | 'name' | 'usage' | null>(null);
   const [dialogSide, setDialogSide] = useState<0 | 1>(1);
-  const [draftOpenAIKey, setDraftOpenAIKey] = useState(''), [draftDeepSeekKey, setDraftDeepSeekKey] = useState('');
-  const [draftProvider, setDraftProvider] = useState<TranslationProvider>('openai');
-  const [draftText, setDraftText] = useState(''), [draftMultiplier, setDraftMultiplier] = useState('1.0');
+  const [draftText, setDraftText] = useState('');
   const [formError, setFormError] = useState(''), [copied, setCopied] = useState(false);
   const [installed, setInstalled] = useState(false), [installEvent, setInstallEvent] = useState<InstallEvent>();
   const [speaking, setSpeaking] = useState(false);
   const [ownName, setOwnName] = useState('Me'), [draftName, setDraftName] = useState('');
   const [editingId, setEditingId] = useState<number>();
-  const [voiceId, setVoiceId] = useState(''), [consentAudio, setConsentAudio] = useState<Blob>(), [sampleAudio, setSampleAudio] = useState<Blob>();
-  const [voiceCreating, setVoiceCreating] = useState(false);
-  const [checkingKey, setCheckingKey] = useState(false);
   const [speechSpeed, setSpeechSpeed] = useState(1);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('face-to-face');
   const [soloDirection, setSoloDirection] = useState<SoloDirection>('listening');
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const playedSpeech = useRef(0);
   const playedCoachSpeech = useRef(0);
-  const voiceOfferChecked = useRef(false);
   const speechRequest = useRef(0), speechAbort = useRef<AbortController | undefined>(undefined), speechAudio = useRef<HTMLAudioElement | undefined>(undefined), speechUrl = useRef('');
-  const { openaiKey, addUsage, setError: reportError, setNotice: reportNotice } = t;
+  const { addUsage, mode: translatorMode, setError: reportError, stop: stopTranslator } = t;
+  const activeAccountId = account?.status === 'active' ? account.id : '';
   const locked = t.mode !== 'idle' || t.phase !== 'ready' || t.pending > 0;
   const panelEntries = useMemo(() => {
     const panels = [transcriptForLanguage(t.history, t.pair[0]), transcriptForLanguage(t.history, t.pair[1])] as Array<Array<{ id: number; text: string; speaker: 'self' | 'other'; pending?: boolean; provisional?: boolean }>>;
@@ -179,55 +175,63 @@ export default function Home() {
   }, [t.history, t.pair, t.pendingTurns]);
   const visibleDialog = t.needsSettings ? 'settings' : dialog;
   useEffect(() => {
-    void fetch('/api/unlock', { credentials: 'same-origin' }).then(response => response.json()).then(data => setAccess((data as { unlocked?: boolean }).unlocked ? 'unlocked' : 'locked')).catch(() => { setAccess('locked'); setAccessError('无法检查访问状态，请刷新后重试'); });
+    void accountRequest<{ account: AccountSnapshot | null }>('/api/auth').then(data => setAccount(data.account)).catch(() => { setAccount(null); setAuthError('暂时无法读取账户，请刷新后重试'); });
     queueMicrotask(() => { setInstalled(window.matchMedia('(display-mode: standalone)').matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone)); });
     queueMicrotask(() => { const speed = Number(localStorage.getItem('lucky-speech-speed')); if ([.75, 1, 1.5, 2].includes(speed)) setSpeechSpeed(speed); });
     queueMicrotask(() => { const layout = localStorage.getItem('lucky-layout'); if (layout === 'single-operator' || layout === 'same-direction') setLayoutMode('single-operator'); });
     queueMicrotask(() => { if (localStorage.getItem('lucky-solo-direction') === 'speaking') setSoloDirection('speaking'); });
-    queueMicrotask(() => { try { const profile = JSON.parse(localStorage.getItem('lucky-profile') || 'null'); if (typeof profile?.name === 'string') { setOwnName(profile.name.trim().slice(0, 24) || 'Me'); return; } } catch {} setDialog('name'); });
+    queueMicrotask(() => { try { const profile = JSON.parse(localStorage.getItem('lucky-profile') || 'null'); if (typeof profile?.name === 'string') setOwnName(profile.name.trim().slice(0, 24) || 'Me'); } catch {} });
     const before = (event: Event) => { event.preventDefault(); setInstallEvent(event as InstallEvent); };
     const installedHandler = () => { setInstalled(true); setInstallEvent(undefined); };
     window.addEventListener('beforeinstallprompt', before); window.addEventListener('appinstalled', installedHandler);
     if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/sw.js').catch(() => {});
     return () => { window.removeEventListener('beforeinstallprompt', before); window.removeEventListener('appinstalled', installedHandler); clearTimeout(copyTimer.current); };
   }, []);
+  useEffect(() => {
+    if (!account || account.status !== 'active') return;
+    try {
+      const profile = JSON.parse(localStorage.getItem('lucky-profile') || 'null');
+      if (typeof profile?.name === 'string') return;
+    } catch {}
+    let cancelled = false;
+    void fetch('/api/cloud?type=profile', { credentials: 'same-origin' }).then(async response => response.ok ? await response.json() as { records?: Array<{ data: { name?: string } }> } : null).then(payload => {
+      if (cancelled) return;
+      const remote = payload?.records?.at(-1)?.data.name?.trim().slice(0, 24);
+      if (remote) { setOwnName(remote); try { localStorage.setItem('lucky-profile', JSON.stringify({ name: remote })); } catch {} return; }
+      const name = account.username || 'Me'; setOwnName(name); setDraftName(name); setDialog('name');
+    }).catch(() => { if (!cancelled) { const name = account.username || 'Me'; setOwnName(name); setDraftName(name); setDialog('name'); } });
+    return () => { cancelled = true; };
+  }, [account]);
+  useEffect(() => {
+    const category = appMode === 'coach' ? 'training' : appMode === 'translator' && translatorMode !== 'idle' ? 'translation' : null;
+    if (!activeAccountId || !category) return;
+    const timer = window.setInterval(() => {
+      void accountRequest<{ account: AccountSnapshot }>('/api/account', { method: 'POST', body: JSON.stringify({ seconds: 30, category }) })
+        .then(data => setAccount(data.account)).catch(error => { reportError(error instanceof Error ? error.message : '无法记录使用时间'); void stopTranslator(); });
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, [activeAccountId, appMode, translatorMode, reportError, stopTranslator]);
   const open = (name: NonNullable<typeof dialog>, side: 0 | 1 = 1) => {
     void t.stop(); t.setNeedsSettings(false); setDialogSide(side); setFormError('');
-    if (name === 'settings') { setDraftOpenAIKey(t.openaiKey); setDraftDeepSeekKey(t.deepseekKey); setDraftProvider(t.translationProvider); setDraftMultiplier(t.multiplier.toFixed(1)); }
     if (name === 'name') setDraftName(ownName === 'Me' ? '' : ownName);
     setDialog(name);
   };
   const closeDialog = () => { setDialog(null); if (settingsReturnMode) { setAppMode(settingsReturnMode); setSettingsReturnMode(null); } };
-  const saveName = (value: string) => { const name = value.trim().slice(0, 24) || 'Me'; setOwnName(name); try { localStorage.setItem('lucky-profile', JSON.stringify({ name })); } catch {} closeDialog(); };
+  const saveName = (value: string) => { const name = value.trim().slice(0, 24) || 'Me'; setOwnName(name); try { localStorage.setItem('lucky-profile', JSON.stringify({ name })); } catch {} void saveCloudRecord('profile', 'profile', { name }); closeDialog(); };
   const editSentence = (side: 0 | 1, id: number, text: string) => { setEditingId(id); setDraftText(text); open('edit', side); };
   const stopSpeech = useCallback(() => {
     speechRequest.current++; speechAbort.current?.abort(); speechAbort.current = undefined;
     const audio = speechAudio.current; if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
     if (speechUrl.current) URL.revokeObjectURL(speechUrl.current); speechUrl.current = ''; setSpeaking(false);
   }, []);
-  useEffect(() => {
-    if (access !== 'unlocked' || !openaiKey || dialog !== null || voiceOfferChecked.current) return;
-    voiceOfferChecked.current = true;
-    const saved = localStorage.getItem('lucky-custom-voice') || '';
-    queueMicrotask(() => {
-      setVoiceId(saved);
-      if (!saved && localStorage.getItem('lucky-voice-setup-dismissed') !== '1') setDialog('voice');
-    });
-  }, [access, openaiKey, dialog]);
   const playSpeech = useCallback(async (text: string, lang: string) => {
-    stopSpeech(); if (!openaiKey) { reportError('朗读需要先填写 OpenAI 密钥'); return; }
+    stopSpeech();
     const requestId = ++speechRequest.current, abort = new AbortController(); speechAbort.current = abort; setSpeaking(true);
     try {
-      const voiceId = localStorage.getItem('lucky-custom-voice') || undefined;
-      let result: Awaited<ReturnType<typeof synthesizeSpeechDirect>>;
-      try { result = await synthesizeSpeechDirect({ text, language: lang, voiceId, speed: speechSpeed, key: openaiKey, signal: abort.signal }); }
-      catch (cause) {
-        if (!voiceId || !(cause instanceof DirectApiError) || !['forbidden', 'not_found'].includes(cause.kind)) throw cause;
-        localStorage.removeItem('lucky-custom-voice'); setVoiceId(''); reportNotice('自定义声音不可用，已切换到内置声音');
-        result = await synthesizeSpeechDirect({ text, language: lang, speed: speechSpeed, key: openaiKey, signal: abort.signal });
-      }
+      const result = await synthesizeSpeechDirect({ text, language: lang, speed: speechSpeed, signal: abort.signal });
       addUsage(result.usage.tokens, result.usage.cost); if (requestId !== speechRequest.current) return;
       const url = URL.createObjectURL(result.audio), audio = new Audio(url);
+      audio.playbackRate = speechSpeed;
       audio.onended = () => { if (requestId === speechRequest.current) stopSpeech(); };
       audio.onerror = () => { if (requestId === speechRequest.current) { stopSpeech(); reportError('语音播放失败，请重试'); } };
       speechAudio.current = audio; speechUrl.current = url;
@@ -236,7 +240,7 @@ export default function Home() {
       if (requestId !== speechRequest.current || abort.signal.aborted) return;
       stopSpeech(); reportError(cause instanceof Error && cause.name === 'NotAllowedError' ? '浏览器阻止了自动播放，请点译文旁的喇叭播放' : cause instanceof Error ? cause.message : '朗读失败，请重试');
     }
-  }, [addUsage, openaiKey, reportError, reportNotice, speechSpeed, stopSpeech]);
+  }, [addUsage, reportError, speechSpeed, stopSpeech]);
   useEffect(() => {
     const request = t.autoSpeech;
     const mayPlay = (t.mode === 'idle' && t.phase === 'ready') || (layoutMode === 'single-operator' && t.mode === 'continuous' && t.phase === 'listening');
@@ -262,45 +266,18 @@ export default function Home() {
       document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
     } catch { setFormError('导出失败，请尝试复制全部内容'); }
   };
-  const createVoice = async (event: React.SyntheticEvent<HTMLFormElement>) => {
-    event.preventDefault(); if (!consentAudio || !sampleAudio || voiceCreating) { setFormError('请先完成两段录音'); return; }
-    setVoiceCreating(true); setFormError('');
+  const authenticate = async (event: React.SyntheticEvent<HTMLFormElement>) => {
+    event.preventDefault(); if (!authEmail.trim() || !authPassword || authBusy) return;
+    setAuthBusy(true); setAuthError('');
     try {
-      const abort = new AbortController(), voice = await createCustomVoiceDirect({ name: ownName, consent: consentAudio, sample: sampleAudio, key: openaiKey, signal: abort.signal });
-      localStorage.setItem('lucky-custom-voice', voice); localStorage.removeItem('lucky-voice-setup-dismissed'); setVoiceId(voice); setConsentAudio(undefined); setSampleAudio(undefined); closeDialog(); reportError('');
-    } catch (cause) {
-      if (cause instanceof DirectApiError && cause.kind === 'voice_unavailable') { localStorage.setItem('lucky-voice-setup-dismissed', '1'); closeDialog(); reportNotice('此账号未开放自定义声音，已使用内置声音'); }
-      else setFormError(cause instanceof Error ? cause.message : '无法创建声音，请重试');
-    }
-    finally { setVoiceCreating(false); }
+      const data = await accountRequest<{ account: AccountSnapshot }>('/api/auth', { method: 'POST', body: JSON.stringify({ action: authMode, email: authEmail.trim(), username: authUsername.trim(), password: authPassword }) });
+      setAccount(data.account); setAuthPassword('');
+    } catch (cause) { setAuthError(cause instanceof Error ? cause.message : '暂时无法登录'); }
+    finally { setAuthBusy(false); }
   };
-  const chooseDefaultVoice = () => { localStorage.setItem('lucky-voice-setup-dismissed', '1'); setConsentAudio(undefined); setSampleAudio(undefined); closeDialog(); };
-  const saveSettings = async (event: React.SyntheticEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const openai = draftOpenAIKey.trim(), deepseek = draftDeepSeekKey.trim(), nextMultiplier = Number(draftMultiplier);
-    const invalid = (key: string) => key.length > 512 || /[\r\n]/.test(key);
-    if (invalid(openai) || invalid(deepseek) || (draftProvider === 'openai' ? !openai : !deepseek)) { setFormError(`请填写有效的 ${draftProvider === 'openai' ? 'OpenAI' : 'DeepSeek'} 密钥`); return; }
-    if (!Number.isFinite(nextMultiplier) || nextMultiplier < .1 || nextMultiplier > 100) { setFormError('倍率请输入 0.1 到 100'); return; }
-    setCheckingKey(true); setFormError('');
-    try {
-      const checks: Promise<void>[] = [];
-      if (openai) checks.push(verifyDirectKey('openai', openai));
-      if (deepseek) checks.push(verifyDirectKey('deepseek', deepseek));
-      await Promise.all(checks);
-      t.setMultiplier(nextMultiplier); t.setCredentials({ openaiKey: openai, deepseekKey: deepseek, provider: draftProvider }); t.setNeedsSettings(false); closeDialog();
-    } catch (cause) { setFormError(cause instanceof Error ? cause.message : '无法验证服务密钥'); }
-    finally { setCheckingKey(false); }
-  };
-  const unlock = async (event: React.SyntheticEvent<HTMLFormElement>) => {
-    event.preventDefault(); if (!accessPassword || unlocking) return;
-    setUnlocking(true); setAccessError('');
-    try {
-      const response = await fetch('/api/unlock', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: accessPassword }) });
-      const data = await response.json().catch(() => ({})) as { error?: string; unlocked?: boolean };
-      if (!response.ok || !data.unlocked) throw new Error(data.error || '暂时无法进入，请稍后重试');
-      setAccessPassword(''); setAccess('unlocked');
-    } catch (cause) { setAccessError(cause instanceof Error ? cause.message : '暂时无法进入，请稍后重试'); }
-    finally { setUnlocking(false); }
+  const logout = async () => {
+    await accountRequest('/api/auth', { method: 'DELETE' }).catch(() => {});
+    void t.stop(); stopSpeech(); setDialog(null); setAppMode(null); setAccount(null);
   };
   const install = async () => {
     if (!installEvent) { open('help'); return; }
@@ -308,26 +285,37 @@ export default function Home() {
     if (result.outcome === 'accepted') setInstallEvent(undefined);
   };
   const status = t.error || (t.phase === 'permission' ? '请允许使用麦克风…' : t.phase === 'listening' ? (layoutMode === 'single-operator' ? '' : '正在聆听，双方都可以说话') : t.phase === 'stopping' ? '正在结束录音…' : t.notice);
-  const usageRows = [
-    { label: '今日', tokens: t.usageTotals.dayTokens, cost: t.usageTotals.dayCost },
-    { label: '本月', tokens: t.usageTotals.monthTokens, cost: t.usageTotals.monthCost },
-    { label: '累计', tokens: t.usageTotals.totalTokens, cost: t.usageTotals.totalCost },
-  ];
+  const usageRows = account ? [
+    { label: '今日', tokens: account.usage.todayTokens, cost: account.usage.todayCost, seconds: account.usage.todaySeconds },
+    { label: '本月', tokens: account.usage.monthTokens, cost: account.usage.monthCost, seconds: account.usage.monthSeconds },
+    { label: '累计', tokens: account.usage.totalTokens, cost: account.usage.totalCost, seconds: account.usage.totalSeconds },
+  ] : [];
+  const duration = (seconds: number) => seconds >= 3600 ? `${(seconds / 3600).toFixed(1)} 小时` : `${Math.round(seconds / 60)} 分钟`;
+  const remaining = account ? account.limits.dailySeconds > 0 ? Math.max(0, account.limits.dailySeconds - account.usage.todaySeconds) : Math.max(0, account.limits.monthlySeconds - account.usage.monthSeconds) : 0;
   const selfSide = (t.selfOnTop ? 0 : 1) as 0 | 1, otherSide = (1 - selfSide) as 0 | 1;
   const panelOrder: Array<0 | 1> = layoutMode === 'single-operator' ? [otherSide, selfSide] : [0, 1];
-  if (access !== 'unlocked') return <main className="access-page"><section className="access-card" aria-busy={access === 'checking'}>
-    <div className="access-mark"><ShieldCheck /></div><h1>Lucky 同声翻译</h1>
-    {access === 'checking' ? <p><LoaderCircle className="spinning" />正在检查访问权限…</p> : <form onSubmit={unlock}>
-      <label className="field-label" htmlFor="site-password">请输入访问密码</label>
-      <Input id="site-password" type="password" className="app-input" value={accessPassword} onChange={event => setAccessPassword(event.target.value)} autoComplete="current-password" maxLength={128} />
-      {accessError && <p role="alert" className="form-error">{accessError}</p>}
-      <Button type="submit" className="form-submit" disabled={!accessPassword || unlocking}>{unlocking ? <><LoaderCircle className="spinning" />正在验证</> : '进入网站'}</Button>
-    </form>}
+  if (account === undefined) return <main className="access-page"><section className="access-card" aria-busy="true">
+    <div className="access-mark"><ShieldCheck /></div><h1>Lucky 同声翻译</h1><p><LoaderCircle className="spinning" />正在读取账户…</p>
   </section></main>;
-  if (appMode === null) return <main className="mode-page"><section className="mode-card"><Image className="lucky-cat" src="/lucky-cat.webp" width={128} height={128} alt="Lucky cat" unoptimized /><p className="mode-brand">LUCKY</p><h1>What would you like to do?</h1><div className="mode-options"><Button onClick={() => { setCoachEntryStage('chat'); setAppMode('coach'); if (coach.history.length === 0 && !coach.busy) void coach.beginSession(); }}><strong>English Coach</strong><span>Have a natural conversation and practise afterwards</span></Button><Button variant="outline" onClick={() => setAppMode('translator')}><strong>Translator</strong><span>Translate a live conversation in both directions</span></Button></div><Button variant="ghost" className="mode-settings" onClick={() => { setSettingsReturnMode(null); setAppMode('translator'); queueMicrotask(() => open('settings')); }}><Settings2 />设置服务密钥</Button></section></main>;
+  if (account === null) return <main className="access-page"><section className="access-card">
+    <div className="access-mark"><ShieldCheck /></div><h1>Lucky 同声翻译</h1>
+    <div className="auth-tabs"><Button type="button" variant={authMode === 'login' ? 'secondary' : 'ghost'} onClick={() => { setAuthMode('login'); setAuthError(''); }}>登录</Button><Button type="button" variant={authMode === 'register' ? 'secondary' : 'ghost'} onClick={() => { setAuthMode('register'); setAuthError(''); }}>申请注册</Button></div>
+    <form onSubmit={authenticate}>
+      <label className="field-label" htmlFor="account-email">{authMode === 'login' ? '邮箱或用户名' : '邮箱'}</label>
+      <Input id="account-email" type={authMode === 'register' ? 'email' : 'text'} className="app-input" value={authEmail} onChange={event => setAuthEmail(event.target.value)} autoComplete={authMode === 'login' ? 'username' : 'email'} maxLength={254} />
+      {authMode === 'register' && <><label className="field-label" htmlFor="account-username">用户名</label><Input id="account-username" className="app-input" value={authUsername} onChange={event => setAuthUsername(event.target.value)} autoComplete="username" minLength={2} maxLength={24} /></>}
+      <label className="field-label" htmlFor="account-password">密码</label>
+      <Input id="account-password" type="password" className="app-input" value={authPassword} onChange={event => setAuthPassword(event.target.value)} autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} minLength={authMode === 'register' ? 8 : 1} maxLength={128} />
+      {authMode === 'register' && <p className="field-note">提交后等待管理员激活会员等级。</p>}
+      {authError && <p role="alert" className="form-error">{authError}</p>}
+      <Button type="submit" className="form-submit" disabled={!authEmail.trim() || !authPassword || (authMode === 'register' && (authUsername.trim().length < 2 || authPassword.length < 8)) || authBusy}>{authBusy ? <><LoaderCircle className="spinning" />正在提交</> : authMode === 'login' ? '登录' : '提交注册申请'}</Button>
+    </form>
+  </section></main>;
+  if (account.status !== 'active') return <main className="access-page"><section className="access-card member-pending"><div className="access-mark"><ShieldCheck /></div><h1>{account.status === 'pending' ? '注册申请已提交' : account.status === 'expired' ? '会员已到期' : '账户已暂停'}</h1><p>{account.status === 'pending' ? '管理员激活会员后即可开始使用。' : '请联系管理员恢复账户。'}</p><strong>{account.email || account.username}</strong><Button className="form-submit" onClick={() => void accountRequest<{ account: AccountSnapshot | null }>('/api/auth').then(data => setAccount(data.account))}>刷新状态</Button><Button variant="ghost" onClick={() => void logout()}><LogOut />退出账户</Button></section></main>;
+  if (appMode === null) return <main className="mode-page"><section className="mode-card"><Image className="lucky-cat" src="/lucky-cat.webp" width={128} height={128} alt="Lucky cat" unoptimized /><p className="mode-brand">LUCKY</p><h1>What would you like to do?</h1><div className="member-summary"><span>{account.username} · {account.level.toUpperCase()}</span><strong>剩余 {duration(remaining)}</strong><small>云空间 {(account.storage.bytes / 1024 / 1024).toFixed(1)} / {(account.storage.limitBytes / 1024 / 1024).toFixed(0)} MB</small></div>{account.storage.warning && <button className="storage-warning" onClick={() => { setAppMode('translator'); queueMicrotask(() => open('history')); }}>云空间接近上限，请导出对话</button>}<div className="mode-options"><Button onClick={() => { setCoachEntryStage('chat'); setAppMode('coach'); if (coach.history.length === 0 && !coach.busy) void coach.beginSession(); }}><strong>English Coach</strong><span>Have a natural conversation and practise afterwards</span></Button><Button variant="outline" onClick={() => setAppMode('translator')}><strong>Translator</strong><span>Translate a live conversation in both directions</span></Button></div><div className="mode-account-actions"><Button variant="ghost" className="mode-settings" onClick={() => { setSettingsReturnMode(null); setAppMode('translator'); queueMicrotask(() => open('settings')); }}><Settings2 />设置</Button><Button variant="ghost" className="mode-settings" onClick={() => void logout()}><LogOut />退出</Button></div></section></main>;
   if (appMode === 'coach') return <CoachMode coach={coach} speaking={speaking} initialStage={coachEntryStage} onBack={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('chat'); setAppMode(null); }} onSettings={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('settings')); }} onSpeak={text => void playSpeech(text, 'en')} />;
   return <main className="translator"><div className={`app-frame ${layoutMode === 'single-operator' ? 'single-operator' : ''}`}>
-    {panelOrder.map((side, index) => <LanguagePanel key={side} controller={t} onHistory={() => open('history')} totals={t.usageTotals} multiplier={t.multiplier} side={side} visualRow={layoutMode === 'single-operator' ? index + 1 : side === 0 ? 1 : 3} isSelf={side === selfSide} facingAway={layoutMode === 'face-to-face' && side === 0} showRecord={layoutMode === 'face-to-face'} ownName={ownName} pair={t.pair} entries={panelEntries[side]} locked={locked} canSpeak={Boolean(t.openaiKey)} onLanguage={t.changePair} onEdit={(id, text) => editSentence(side, id, text)} onSpeak={text => void playSpeech(text, t.pair[side])} onBeforeRecord={stopSpeech} onUsage={() => open('usage', side)} />)}
+    {panelOrder.map((side, index) => <LanguagePanel key={side} controller={t} onHistory={() => open('history')} totals={{ ...t.usageTotals, dayCost: account.usage.todayCost, dayTokens: account.usage.todayTokens, monthCost: account.usage.monthCost, monthTokens: account.usage.monthTokens }} multiplier={account.costMultiplier} side={side} visualRow={layoutMode === 'single-operator' ? index + 1 : side === 0 ? 1 : 3} isSelf={side === selfSide} facingAway={layoutMode === 'face-to-face' && side === 0} showRecord={layoutMode === 'face-to-face'} ownName={ownName} pair={t.pair} entries={panelEntries[side]} locked={locked} canSpeak={true} onLanguage={t.changePair} onEdit={(id, text) => editSentence(side, id, text)} onSpeak={text => void playSpeech(text, t.pair[side])} onBeforeRecord={stopSpeech} onUsage={() => open('usage', side)} />)}
     <section className={`control-deck ${layoutMode === 'single-operator' ? 'single-control-deck' : ''}`} aria-label="录音控制">
       <div className="deck-top">{layoutMode === 'face-to-face' && <Button variant="outline" className="side-swap" onClick={() => t.swapSides()} disabled={locked} aria-label="上下切换双方位置" title="上下切换"><ArrowDownUp /><span>切换</span></Button>}<h1 className="wordmark">LUCKY<span>同声翻译</span></h1><div className="deck-actions">
         <Button variant="ghost" onClick={() => open('history')} aria-label="对话记录" title="对话记录"><History /></Button>
@@ -337,55 +325,36 @@ export default function Home() {
       {status && <output className={`status-line ${t.error ? 'has-error' : ''}`} aria-live="polite">{t.pending > 0 && !t.error && <LoaderCircle className="spinning" />}<span>{status}</span></output>}
       {t.failed && <Button variant="outline" className="retry-button" disabled={locked} onClick={t.retry}>重试上一句</Button>}
     </section>
-    <footer className="app-footer"><Button variant="ghost" className="mode-return" onClick={() => { void t.stop(); stopSpeech(); setAppMode(null); }}><ArrowLeft />模式</Button><span className="connection-label"><i data-ready={t.canTranslate} />{t.canTranslate ? `${t.translationProvider === 'deepseek' ? 'DeepSeek' : 'OpenAI'} 已连接` : '尚未连接翻译服务'}</span><div>
+    <footer className="app-footer"><Button variant="ghost" className="mode-return" onClick={() => { void t.stop(); stopSpeech(); setAppMode(null); }}><ArrowLeft />模式</Button><span className="connection-label"><i data-ready={t.canTranslate} />DeepSeek 已连接</span><div>
       {!installed && <Button variant="ghost" onClick={() => void install()} className="install-action"><Download />添加到桌面</Button>}
       <Button variant="ghost" aria-label="使用帮助" onClick={() => open('help')}><CircleHelp /></Button>
     </div></footer>
     {copied && <output className="copy-toast"><Check />已复制</output>}
     {speaking && <Button variant="secondary" className="speech-stop" onClick={stopSpeech}><Square />停止朗读</Button>}
   </div>
-  <Dialog open={visibleDialog !== null} onOpenChange={value => { if (!value) { if (visibleDialog === 'name') saveName(ownName); else if (visibleDialog === 'voice') chooseDefaultVoice(); else closeDialog(); t.setNeedsSettings(false); } }}>
-    <DialogContent className={`app-dialog ${visibleDialog === 'history' ? 'conversation-dialog' : ''} ${visibleDialog === 'edit' ? 'edit-dialog' : ''} ${visibleDialog === 'voice' ? 'voice-dialog' : ''} ${layoutMode === 'face-to-face' && dialogSide === 0 && !t.needsSettings && !['history', 'edit', 'voice', 'usage'].includes(visibleDialog || '') ? 'upside-down' : ''}`} showCloseButton={false}>
-      <DialogHeader><DialogTitle>{visibleDialog === 'name' ? '怎么称呼你？' : visibleDialog === 'settings' ? '连接翻译服务' : visibleDialog === 'history' ? '完整对话' : visibleDialog === 'edit' ? '修改当前这句' : visibleDialog === 'text' ? '输入文字' : visibleDialog === 'voice' ? '用我的声音朗读' : visibleDialog === 'usage' ? '使用明细' : '随时打开，面对面聊'}</DialogTitle><DialogDescription>
-        {visibleDialog === 'name' ? 'What should we call you?' : visibleDialog === 'settings' ? '使用你自己的服务密钥开启语音识别和翻译。' : visibleDialog === 'history' ? (locked ? '正在整理最后的对话…' : `${t.history.length} 句 · 仅保留在本次页面中`) : visibleDialog === 'edit' ? `按${language(t.pair[dialogSide])?.label}修改，保存后更新双方译文。` : visibleDialog === 'text' ? '任意语言都可以，会同时转换成双方的语言。' : visibleDialog === 'voice' ? '可选设置。录音仅用于在你的 OpenAI 账户中创建声音。' : visibleDialog === 'usage' ? '此设备通过 Lucky 产生的用量。' : '添加到手机主屏幕，像应用一样打开。'}
+  <Dialog open={visibleDialog !== null} onOpenChange={value => { if (!value) { if (visibleDialog === 'name') saveName(ownName); else closeDialog(); t.setNeedsSettings(false); } }}>
+    <DialogContent className={`app-dialog ${visibleDialog === 'history' ? 'conversation-dialog' : ''} ${visibleDialog === 'edit' ? 'edit-dialog' : ''} ${layoutMode === 'face-to-face' && dialogSide === 0 && !t.needsSettings && !['history', 'edit', 'usage'].includes(visibleDialog || '') ? 'upside-down' : ''}`} showCloseButton={false}>
+      <DialogHeader><DialogTitle>{visibleDialog === 'name' ? '怎么称呼你？' : visibleDialog === 'settings' ? '账户与设置' : visibleDialog === 'history' ? '完整对话' : visibleDialog === 'edit' ? '修改当前这句' : visibleDialog === 'text' ? '输入文字' : visibleDialog === 'usage' ? '使用明细' : '随时打开，面对面聊'}</DialogTitle><DialogDescription>
+        {visibleDialog === 'name' ? 'What should we call you?' : visibleDialog === 'settings' ? '个人偏好会保存在这个账户和当前设备。' : visibleDialog === 'history' ? (locked ? '正在整理最后的对话…' : `${t.history.length} 句 · 已同步到个人云存档`) : visibleDialog === 'edit' ? `按${language(t.pair[dialogSide])?.label}修改，保存后更新双方译文。` : visibleDialog === 'text' ? '任意语言都可以，会同时转换成双方的语言。' : visibleDialog === 'usage' ? '费用、Token 和会员计费时间均来自云端账户。' : '添加到手机主屏幕，像应用一样打开。'}
       </DialogDescription></DialogHeader>
       <DialogClose render={<Button variant="ghost" className="dialog-close" aria-label="关闭" />}><X /></DialogClose>
       {visibleDialog === 'name' && <form onSubmit={event => { event.preventDefault(); saveName(draftName); }}><label htmlFor="display-name" className="field-label">你的名字 / Your name</label><Input id="display-name" className="app-input" value={draftName} onChange={event => setDraftName(event.target.value)} placeholder="Me" maxLength={24} autoComplete="nickname" /><p className="field-note">只保存在这台设备，下次自动使用。</p><Button type="submit" className="form-submit">{draftName.trim() ? '记住名字，开始对话' : '使用 Me，开始对话'}</Button></form>}
-      {visibleDialog === 'settings' && <form onSubmit={saveSettings}>
+      {visibleDialog === 'settings' && <div className="settings-form">
         <div className="profile-setting"><span>{ownName}</span><Button type="button" variant="ghost" onClick={() => open('name')}>修改名字</Button></div>
-        <div className="profile-setting"><span>{voiceId ? 'OpenAI · 已使用我的声音' : 'OpenAI · 内置 AI 声音'}</span><Button type="button" variant="ghost" disabled={!draftOpenAIKey.trim()} onClick={() => { setConsentAudio(undefined); setSampleAudio(undefined); open('voice'); }}>{draftOpenAIKey.trim() ? (voiceId ? '重新录制' : '训练我的声音') : '需 OpenAI 密钥'}</Button></div>
+        <div className="profile-setting"><span>{account.username} · {account.level.toUpperCase()}</span><strong>剩余 {duration(remaining)}</strong></div>
         <label className="field-label" htmlFor="layout-mode">页面布局</label>
         <Select value={layoutMode} onValueChange={value => { if (!value) return; const layout = value as LayoutMode; setLayoutMode(layout); try { localStorage.setItem('lucky-layout', layout); } catch {} }}><SelectTrigger id="layout-mode" className="app-input"><SelectValue>{layoutMode === 'face-to-face' ? '面对面 · 双方操作' : '单人 · Listening / Speaking'}</SelectValue></SelectTrigger><SelectContent><SelectItem value="face-to-face">面对面 · 双方操作</SelectItem><SelectItem value="single-operator">单人 · Listening / Speaking</SelectItem></SelectContent></Select>
-        <label className="field-label" htmlFor="translation-provider">文字翻译引擎</label>
-        <Select value={draftProvider} onValueChange={value => { if (value) setDraftProvider(value as TranslationProvider); }}><SelectTrigger id="translation-provider" className="app-input"><SelectValue>{draftProvider === 'deepseek' ? 'DeepSeek · V4 Flash' : 'OpenAI · GPT-4o mini'}</SelectValue></SelectTrigger><SelectContent><SelectItem value="openai">OpenAI · GPT-4o mini</SelectItem><SelectItem value="deepseek">DeepSeek · V4 Flash</SelectItem></SelectContent></Select>
-        <label className="field-label" htmlFor="openai-key">OpenAI 密钥</label>
-        <Input id="openai-key" type="password" value={draftOpenAIKey} onChange={event => setDraftOpenAIKey(event.target.value)} autoComplete="off" placeholder="sk-…" className="app-input" />
-        <p className="field-note">用于录音识别、AI 朗读和 OpenAI 翻译。录音功能需要填写。</p>
-        <label className="field-label" htmlFor="deepseek-key">DeepSeek 密钥</label>
-        <Input id="deepseek-key" type="password" value={draftDeepSeekKey} onChange={event => setDraftDeepSeekKey(event.target.value)} autoComplete="off" placeholder="sk-…" className="app-input" />
-        <p className="field-note">选择 DeepSeek 时用于文字翻译。两个密钥都只保存在这台设备。</p>
         <label className="field-label" htmlFor="speech-speed">朗读语速</label>
         <Select value={String(speechSpeed)} onValueChange={value => { if (!value) return; const speed = Number(value); setSpeechSpeed(speed); try { localStorage.setItem('lucky-speech-speed', value); } catch {} }}><SelectTrigger id="speech-speed" className="app-input"><SelectValue>{speechSpeed}×</SelectValue></SelectTrigger><SelectContent>{[.75, 1, 1.5, 2].map(speed => <SelectItem key={speed} value={String(speed)}>{speed}×</SelectItem>)}</SelectContent></Select>
-        <label className="field-label" htmlFor="price-multiplier">费用显示倍率</label>
-        <Input id="price-multiplier" type="number" inputMode="decimal" min="0.1" max="100" step="0.1" value={draftMultiplier} onChange={event => setDraftMultiplier(event.target.value)} className="app-input" />
-        <p className="field-note">当前为 ×{t.multiplier.toFixed(1)}。例如实际费用 $1.00，倍率 2.0 时显示 $2.00。</p>
-        <details className="inline-help"><summary>轻量模型与费用<ChevronDown /></summary><p>OpenAI 使用 gpt-4o-mini，DeepSeek 使用 deepseek-v4-flash。不会调用 6.0 或自动升级到大型模型。</p><p>语音识别使用 OpenAI 的轻量转写模型。请求由这台设备直接发送给所选服务商，网页服务器不转发密钥、录音或对话。</p></details>
-        {formError && <p role="alert" className="form-error">{formError}</p>}
-        <div className="credential-actions"><Button type="submit" className="form-submit" disabled={checkingKey}>{checkingKey ? <><LoaderCircle className="spinning" />正在验证密钥</> : '验证并保存到本设备'}</Button>{(t.openaiKey || t.deepseekKey) && <Button type="button" variant="ghost" className="clear-key" onClick={() => { t.clearCredentials(); setDraftOpenAIKey(''); setDraftDeepSeekKey(''); }}>清除已保存密钥</Button>}<Button type="button" variant="ghost" className="clear-key" onClick={() => { void fetch('/api/unlock', { method: 'DELETE', credentials: 'same-origin' }); setDialog(null); setAccess('locked'); }}>锁定网站</Button></div>
-      </form>}
+        <details className="inline-help"><summary>会员计时规则<ChevronDown /></summary><p>English Coach 按实际时间计费。Translator 按实际对话时间的 10% 计费：翻译 1 小时扣 6 分钟。导出不扣时间。</p></details>
+        <div className="account-storage"><span>个人云空间</span><strong>{(account.storage.bytes / 1024 / 1024).toFixed(1)} / {(account.storage.limitBytes / 1024 / 1024).toFixed(0)} MB</strong></div>
+        <Button type="button" variant="ghost" className="clear-key" onClick={() => void logout()}><LogOut />退出账户</Button>
+      </div>}
       {visibleDialog === 'text' && <form onSubmit={event => { event.preventDefault(); if (!draftText.trim()) { setFormError('请输入想说的话'); return; } if (t.submitText(draftText.trim(), dialogSide)) setDialog(null); }}>
         <label className="field-label" htmlFor="typed-text">想说的话</label><Textarea id="typed-text" className="app-input text-input" value={draftText} maxLength={2000} onChange={event => setDraftText(event.target.value)} placeholder="在这里输入…" />
         {formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={t.pending > 0}>翻译</Button>
       </form>}
-      {visibleDialog === 'voice' && <form onSubmit={createVoice}>
-        <AudioSampleRecorder label="1 · 录制英文授权声明" prompt="请逐字朗读：I am the owner of this voice and I consent to OpenAI using this voice to create a synthetic voice model." value={consentAudio} onChange={audio => { setConsentAudio(audio); setFormError(''); }} />
-        <AudioSampleRecorder label="2 · 录制英文声音样本" prompt={'请用平时说英文的语气，完整朗读下面这段范文（约 15 秒）：\n\n“Hello, it’s great to meet you. Today feels like a wonderful day to explore something new. Wherever this conversation takes us, I want my voice to sound clear, natural, friendly, and confident.”'} value={sampleAudio} onChange={audio => { setSampleAudio(audio); setFormError(''); }} />
-        <p className="field-note">自定义声音只对部分 OpenAI 账户开放。所有播放声音均由 AI 生成。</p>
-        {formError && <p role="alert" className="form-error">{formError}</p>}
-        <Button type="submit" className="form-submit" disabled={!consentAudio || !sampleAudio || voiceCreating}>{voiceCreating ? <><LoaderCircle className="spinning" />正在创建声音</> : '创建并使用我的声音'}</Button>
-        <Button type="button" variant="ghost" className="default-voice" onClick={chooseDefaultVoice}>暂时使用内置声音</Button>
-      </form>}
-      {visibleDialog === 'usage' && <div className="usage-details">{usageRows.map(item => <article key={item.label}><span>{item.label}</span><strong>${(item.cost * t.multiplier).toFixed(2)}</strong><small>{item.tokens.toLocaleString()} tokens · 实际 ${item.cost.toFixed(2)}</small></article>)}<p>当前显示倍率 <strong>×{t.multiplier.toFixed(1)}</strong></p></div>}
+      {visibleDialog === 'usage' && <div className="usage-details">{usageRows.map(item => <article key={item.label}><span>{item.label}</span><strong>${(item.cost * account.costMultiplier).toFixed(2)}</strong><small>{item.tokens.toLocaleString()} tokens · 计费时间 {duration(item.seconds)} · 实际 ${item.cost.toFixed(4)}</small></article>)}<p>显示倍率 <strong>×{account.costMultiplier.toFixed(1)}</strong>。翻译按实际时间的 10% 计入会员额度；训练按 100% 计入。</p></div>}
       {visibleDialog === 'edit' && <form className="edit-form" onSubmit={event => { event.preventDefault(); if (!draftText.trim() || editingId === undefined) { setFormError('这句话不能为空'); return; } if (t.retranslate(editingId, draftText.trim())) { setDialog(null); setEditingId(undefined); } }}>
         <label className="field-label" htmlFor="edited-text">当前这句话</label><Textarea id="edited-text" className="app-input edit-input" value={draftText} maxLength={2000} onChange={event => setDraftText(event.target.value)} dir="auto" lang={t.pair[dialogSide]} />
         {formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={t.pending > 0}>保存并重新翻译</Button>
