@@ -139,9 +139,11 @@ function SoloDirectionControls({ controller: t, direction, selfSide, otherSide, 
 
 export default function Home() {
   const t = useTranslator();
-  const coach = useCoach(t.openaiKey, t.addUsage);
-  const [access, setAccess] = useState<'checking' | 'locked' | 'unlocked'>('checking');
   const [appMode, setAppMode] = useState<AppMode | null>(null);
+  const coach = useCoach(t.openaiKey, t.addUsage, appMode === 'coach');
+  const [access, setAccess] = useState<'checking' | 'locked' | 'unlocked'>('checking');
+  const [settingsReturnMode, setSettingsReturnMode] = useState<AppMode | null>(null);
+  const [coachEntryStage, setCoachEntryStage] = useState<'chat' | 'dashboard'>('chat');
   const [accessPassword, setAccessPassword] = useState(''), [accessError, setAccessError] = useState('');
   const [unlocking, setUnlocking] = useState(false);
   const [dialog, setDialog] = useState<'settings' | 'help' | 'history' | 'text' | 'edit' | 'name' | 'voice' | 'usage' | null>(null);
@@ -195,7 +197,8 @@ export default function Home() {
     if (name === 'name') setDraftName(ownName === 'Me' ? '' : ownName);
     setDialog(name);
   };
-  const saveName = (value: string) => { const name = value.trim().slice(0, 24) || 'Me'; setOwnName(name); try { localStorage.setItem('lucky-profile', JSON.stringify({ name })); } catch {} setDialog(null); };
+  const closeDialog = () => { setDialog(null); if (settingsReturnMode) { setAppMode(settingsReturnMode); setSettingsReturnMode(null); } };
+  const saveName = (value: string) => { const name = value.trim().slice(0, 24) || 'Me'; setOwnName(name); try { localStorage.setItem('lucky-profile', JSON.stringify({ name })); } catch {} closeDialog(); };
   const editSentence = (side: 0 | 1, id: number, text: string) => { setEditingId(id); setDraftText(text); open('edit', side); };
   const stopSpeech = useCallback(() => {
     speechRequest.current++; speechAbort.current?.abort(); speechAbort.current = undefined;
@@ -264,14 +267,14 @@ export default function Home() {
     setVoiceCreating(true); setFormError('');
     try {
       const abort = new AbortController(), voice = await createCustomVoiceDirect({ name: ownName, consent: consentAudio, sample: sampleAudio, key: openaiKey, signal: abort.signal });
-      localStorage.setItem('lucky-custom-voice', voice); localStorage.removeItem('lucky-voice-setup-dismissed'); setVoiceId(voice); setConsentAudio(undefined); setSampleAudio(undefined); setDialog(null); reportError('');
+      localStorage.setItem('lucky-custom-voice', voice); localStorage.removeItem('lucky-voice-setup-dismissed'); setVoiceId(voice); setConsentAudio(undefined); setSampleAudio(undefined); closeDialog(); reportError('');
     } catch (cause) {
-      if (cause instanceof DirectApiError && cause.kind === 'voice_unavailable') { localStorage.setItem('lucky-voice-setup-dismissed', '1'); setDialog(null); reportNotice('此账号未开放自定义声音，已使用内置声音'); }
+      if (cause instanceof DirectApiError && cause.kind === 'voice_unavailable') { localStorage.setItem('lucky-voice-setup-dismissed', '1'); closeDialog(); reportNotice('此账号未开放自定义声音，已使用内置声音'); }
       else setFormError(cause instanceof Error ? cause.message : '无法创建声音，请重试');
     }
     finally { setVoiceCreating(false); }
   };
-  const chooseDefaultVoice = () => { localStorage.setItem('lucky-voice-setup-dismissed', '1'); setConsentAudio(undefined); setSampleAudio(undefined); setDialog(null); };
+  const chooseDefaultVoice = () => { localStorage.setItem('lucky-voice-setup-dismissed', '1'); setConsentAudio(undefined); setSampleAudio(undefined); closeDialog(); };
   const saveSettings = async (event: React.SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault();
     const openai = draftOpenAIKey.trim(), deepseek = draftDeepSeekKey.trim(), nextMultiplier = Number(draftMultiplier);
@@ -284,7 +287,7 @@ export default function Home() {
       if (openai) checks.push(verifyDirectKey('openai', openai));
       if (deepseek) checks.push(verifyDirectKey('deepseek', deepseek));
       await Promise.all(checks);
-      t.setMultiplier(nextMultiplier); t.setCredentials({ openaiKey: openai, deepseekKey: deepseek, provider: draftProvider }); t.setNeedsSettings(false); setDialog(null);
+      t.setMultiplier(nextMultiplier); t.setCredentials({ openaiKey: openai, deepseekKey: deepseek, provider: draftProvider }); t.setNeedsSettings(false); closeDialog();
     } catch (cause) { setFormError(cause instanceof Error ? cause.message : '无法验证服务密钥'); }
     finally { setCheckingKey(false); }
   };
@@ -321,8 +324,8 @@ export default function Home() {
       <Button type="submit" className="form-submit" disabled={!accessPassword || unlocking}>{unlocking ? <><LoaderCircle className="spinning" />正在验证</> : '进入网站'}</Button>
     </form>}
   </section></main>;
-  if (appMode === null) return <main className="mode-page"><section className="mode-card"><Image className="lucky-cat" src="/lucky-cat.webp" width={128} height={128} alt="Lucky cat" unoptimized /><p className="mode-brand">LUCKY</p><h1>What would you like to do?</h1><div className="mode-options"><Button onClick={() => { setAppMode('coach'); if (coach.history.length === 0 && !coach.busy) void coach.beginSession(); }}><strong>English Coach</strong><span>Have a natural conversation and practise afterwards</span></Button><Button variant="outline" onClick={() => setAppMode('translator')}><strong>Translator</strong><span>Translate a live conversation in both directions</span></Button></div><Button variant="ghost" className="mode-settings" onClick={() => { setAppMode('translator'); queueMicrotask(() => open('settings')); }}><Settings2 />设置服务密钥</Button></section></main>;
-  if (appMode === 'coach') return <CoachMode coach={coach} onBack={() => { stopSpeech(); void coach.stopRecording(); setAppMode(null); }} onSettings={() => { stopSpeech(); void coach.stopRecording(); setAppMode('translator'); queueMicrotask(() => open('settings')); }} onSpeak={text => void playSpeech(text, 'en')} />;
+  if (appMode === null) return <main className="mode-page"><section className="mode-card"><Image className="lucky-cat" src="/lucky-cat.webp" width={128} height={128} alt="Lucky cat" unoptimized /><p className="mode-brand">LUCKY</p><h1>What would you like to do?</h1><div className="mode-options"><Button onClick={() => { setCoachEntryStage('chat'); setAppMode('coach'); if (coach.history.length === 0 && !coach.busy) void coach.beginSession(); }}><strong>English Coach</strong><span>Have a natural conversation and practise afterwards</span></Button><Button variant="outline" onClick={() => setAppMode('translator')}><strong>Translator</strong><span>Translate a live conversation in both directions</span></Button></div><Button variant="ghost" className="mode-settings" onClick={() => { setSettingsReturnMode(null); setAppMode('translator'); queueMicrotask(() => open('settings')); }}><Settings2 />设置服务密钥</Button></section></main>;
+  if (appMode === 'coach') return <CoachMode coach={coach} speaking={speaking} initialStage={coachEntryStage} onBack={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('chat'); setAppMode(null); }} onSettings={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('settings')); }} onSpeak={text => void playSpeech(text, 'en')} />;
   return <main className="translator"><div className={`app-frame ${layoutMode === 'single-operator' ? 'single-operator' : ''}`}>
     {panelOrder.map((side, index) => <LanguagePanel key={side} controller={t} onHistory={() => open('history')} totals={t.usageTotals} multiplier={t.multiplier} side={side} visualRow={layoutMode === 'single-operator' ? index + 1 : side === 0 ? 1 : 3} isSelf={side === selfSide} facingAway={layoutMode === 'face-to-face' && side === 0} showRecord={layoutMode === 'face-to-face'} ownName={ownName} pair={t.pair} entries={panelEntries[side]} locked={locked} canSpeak={Boolean(t.openaiKey)} onLanguage={t.changePair} onEdit={(id, text) => editSentence(side, id, text)} onSpeak={text => void playSpeech(text, t.pair[side])} onBeforeRecord={stopSpeech} onUsage={() => open('usage', side)} />)}
     <section className={`control-deck ${layoutMode === 'single-operator' ? 'single-control-deck' : ''}`} aria-label="录音控制">
@@ -341,7 +344,7 @@ export default function Home() {
     {copied && <output className="copy-toast"><Check />已复制</output>}
     {speaking && <Button variant="secondary" className="speech-stop" onClick={stopSpeech}><Square />停止朗读</Button>}
   </div>
-  <Dialog open={visibleDialog !== null} onOpenChange={value => { if (!value) { if (visibleDialog === 'name') saveName(ownName); else if (visibleDialog === 'voice') chooseDefaultVoice(); else setDialog(null); t.setNeedsSettings(false); } }}>
+  <Dialog open={visibleDialog !== null} onOpenChange={value => { if (!value) { if (visibleDialog === 'name') saveName(ownName); else if (visibleDialog === 'voice') chooseDefaultVoice(); else closeDialog(); t.setNeedsSettings(false); } }}>
     <DialogContent className={`app-dialog ${visibleDialog === 'history' ? 'conversation-dialog' : ''} ${visibleDialog === 'edit' ? 'edit-dialog' : ''} ${visibleDialog === 'voice' ? 'voice-dialog' : ''} ${layoutMode === 'face-to-face' && dialogSide === 0 && !t.needsSettings && !['history', 'edit', 'voice', 'usage'].includes(visibleDialog || '') ? 'upside-down' : ''}`} showCloseButton={false}>
       <DialogHeader><DialogTitle>{visibleDialog === 'name' ? '怎么称呼你？' : visibleDialog === 'settings' ? '连接翻译服务' : visibleDialog === 'history' ? '完整对话' : visibleDialog === 'edit' ? '修改当前这句' : visibleDialog === 'text' ? '输入文字' : visibleDialog === 'voice' ? '用我的声音朗读' : visibleDialog === 'usage' ? '使用明细' : '随时打开，面对面聊'}</DialogTitle><DialogDescription>
         {visibleDialog === 'name' ? 'What should we call you?' : visibleDialog === 'settings' ? '使用你自己的服务密钥开启语音识别和翻译。' : visibleDialog === 'history' ? (locked ? '正在整理最后的对话…' : `${t.history.length} 句 · 仅保留在本次页面中`) : visibleDialog === 'edit' ? `按${language(t.pair[dialogSide])?.label}修改，保存后更新双方译文。` : visibleDialog === 'text' ? '任意语言都可以，会同时转换成双方的语言。' : visibleDialog === 'voice' ? '可选设置。录音仅用于在你的 OpenAI 账户中创建声音。' : visibleDialog === 'usage' ? '此设备通过 Lucky 产生的用量。' : '添加到手机主屏幕，像应用一样打开。'}

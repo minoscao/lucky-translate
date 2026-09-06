@@ -385,3 +385,29 @@ test('post-conversation practice requests two cloze, two meaning and two grammar
     assert.deepEqual(result.data.exercises.map(item => item.type).sort(), ['cloze', 'cloze', 'grammar', 'grammar', 'meaning', 'meaning']);
   } finally { globalThis.fetch = oldFetch; }
 });
+test('daily Coach recall uses the lightweight model and asks for evidence-based English tables', async () => {
+  const oldFetch = globalThis.fetch; let request;
+  const summary = { overview: 'You explained a trip clearly.', mainFocus: ['Past tense'], likelyMistakes: [{ original: 'I go yesterday', better: 'I went yesterday', reason: 'Likely tense error; confirm if transcription changed the word.' }], vocabulary: [{ word: 'memorable', definition: 'worth remembering' }], grammar: [{ point: 'Past simple', example: 'I visited Paris last year.' }] };
+  globalThis.fetch = async (_url, options) => { request = JSON.parse(options.body); return Response.json({ choices: [{ message: { content: JSON.stringify(summary) } }], usage: { total_tokens: 80 } }); };
+  try {
+    const result = await coachApi.coachDailySummaryDirect({ key: 'openai-key', history: [{ id: 1, role: 'learner', text: 'I go to Paris last year.' }], memory: { level: 'A2', topics: ['travel'], strengths: [], focus: [], phrases: [] }, signal: new AbortController().signal });
+    const prompt = request.messages.at(-1).content; assert.equal(request.model, 'gpt-4o-mini'); assert.match(prompt, /speech recognition/i); assert.match(prompt, /English definition/i); assert.match(prompt, /I go to Paris/);
+    assert.equal(result.data.vocabulary[0].word, 'memorable'); assert.equal(result.data.grammar[0].point, 'Past simple');
+  } finally { globalThis.fetch = oldFetch; }
+});
+test('weekly Coach recall consolidates daily records before daily details are retired', async () => {
+  const oldFetch = globalThis.fetch; let request;
+  const summary = { overview: 'You became more precise.', progress: ['Longer answers'], nextFocus: ['Past tense'], vocabulary: [{ word: 'memorable', definition: 'worth remembering' }], grammar: [{ point: 'Past simple', example: 'I visited Paris.' }] };
+  globalThis.fetch = async (_url, options) => { request = JSON.parse(options.body); return Response.json({ choices: [{ message: { content: JSON.stringify(summary) } }], usage: { total_tokens: 90 } }); };
+  try {
+    const daily = [{ id: 'day-2026-08-31', date: '2026-08-31', minutes: 12, overview: 'Travel talk', mainFocus: ['Past tense'], likelyMistakes: [], vocabulary: [{ word: 'memorable', definition: 'worth remembering' }], grammar: [{ point: 'Past simple', example: 'I visited Paris.' }] }];
+    const result = await coachApi.coachWeeklySummaryDirect({ key: 'openai-key', daily, signal: new AbortController().signal });
+    assert.equal(request.model, 'gpt-4o-mini'); assert.match(request.messages.at(-1).content, /weekly recall/i); assert.match(request.messages.at(-1).content, /Travel talk/); assert.equal(result.data.nextFocus[0], 'Past tense');
+  } finally { globalThis.fetch = oldFetch; }
+});
+test('Coach pet web assets include both room themes and every desktop action state', async () => {
+  const clips = ['belly-enter', 'belly-exit', 'belly-wake', 'belly', 'blink', 'groom', 'idle', 'paw-face', 'pet', 'slap', 'sleep-enter', 'sleep', 'tail', 'talk', 'wake'];
+  for (const file of ['coach-room-day.webp', 'coach-room-night.webp', ...clips.map(name => `pet/${name}.webp`)]) {
+    const bytes = await readFile(new URL(`../public/${file}`, import.meta.url)); assert.ok(bytes.length > 1000, `${file} should be a real image`); assert.ok(bytes.length < 400_000, `${file} should remain web-sized`);
+  }
+});

@@ -2,27 +2,51 @@
 /* oxlint-disable react/react-compiler -- controller refs deliberately expose current async state to stable recorder callbacks */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { coachPracticeDirect, coachReplyDirect, CoachExercise, CoachMemory, CoachMessage, EMPTY_COACH_MEMORY } from '@/lib/coach';
+import {
+  coachDailySummaryDirect, coachPracticeDirect, coachReplyDirect, coachWeeklySummaryDirect,
+  CoachDailySummary, CoachExercise, CoachMemory, CoachMessage, CoachWeeklySummary, EMPTY_COACH_MEMORY,
+} from '@/lib/coach';
 import { transcribeDirect } from '@/lib/direct-api';
 import { VoiceRecorder } from '@/lib/voice-recorder';
 
 type UsageHandler = (tokens: number, cost: number) => void;
+type CoachJournal = { todayDate: string; todaySeconds: number; daily: CoachDailySummary[]; weekly: CoachWeeklySummary[] };
+const JOURNAL_KEY = 'lucky-coach-journal';
+const dateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const weekStart = (value: string) => {
+  const date = new Date(`${value}T12:00:00`), day = (date.getDay() + 6) % 7;
+  date.setDate(date.getDate() - day); return dateKey(date);
+};
+const weekEnd = (start: string) => { const date = new Date(`${start}T12:00:00`); date.setDate(date.getDate() + 6); return dateKey(date); };
+const emptyJournal = (): CoachJournal => ({ todayDate: dateKey(), todaySeconds: 0, daily: [], weekly: [] });
 const cleanMemory = (memory: CoachMemory): CoachMemory => ({
   level: String(memory.level || 'discovering').slice(0, 80), topics: (memory.topics || []).map(String).slice(-12),
   strengths: (memory.strengths || []).map(String).slice(-12), focus: (memory.focus || []).map(String).slice(-12), phrases: (memory.phrases || []).map(String).slice(-20),
 });
+const readJournal = (): CoachJournal => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(JOURNAL_KEY) || 'null'), today = dateKey();
+    return {
+      todayDate: today, todaySeconds: raw?.todayDate === today && Number.isFinite(raw?.todaySeconds) ? Math.max(0, raw.todaySeconds) : 0,
+      daily: Array.isArray(raw?.daily) ? raw.daily.sort((a: CoachDailySummary, b: CoachDailySummary) => b.date.localeCompare(a.date)).slice(0, 14) : [],
+      weekly: Array.isArray(raw?.weekly) ? raw.weekly.sort((a: CoachWeeklySummary, b: CoachWeeklySummary) => b.startDate.localeCompare(a.startDate)).slice(0, 52) : [],
+    };
+  } catch { return emptyJournal(); }
+};
 
-export function useCoach(openaiKey: string, addUsage: UsageHandler) {
+export function useCoach(openaiKey: string, addUsage: UsageHandler, active = false) {
   const [history, setHistory] = useState<CoachMessage[]>([]), [memory, setMemory] = useState<CoachMemory>(EMPTY_COACH_MEMORY);
   const [busy, setBusy] = useState(false), [recording, setRecording] = useState(false), [error, setError] = useState(''), [tip, setTip] = useState('');
   const [practice, setPractice] = useState<{ title: string; exercises: CoachExercise[] }>(), [speechRequest, setSpeechRequest] = useState<{ id: number; text: string }>();
+  const [journal, setJournal] = useState<CoachJournal>(emptyJournal);
   const recorder = useRef<VoiceRecorder | undefined>(undefined), abort = useRef<AbortController | undefined>(undefined), keyRef = useRef(openaiKey), usageRef = useRef(addUsage);
-  const historyRef = useRef<CoachMessage[]>([]), memoryRef = useRef<CoachMemory>(EMPTY_COACH_MEMORY), busyRef = useRef(false), recordingRef = useRef(false);
-  const messageId = useRef(0), speechId = useRef(0), shortStreak = useRef(0);
+  const historyRef = useRef<CoachMessage[]>([]), memoryRef = useRef<CoachMemory>(EMPTY_COACH_MEMORY), busyRef = useRef(false), recordingRef = useRef(false), journalRef = useRef<CoachJournal>(emptyJournal());
+  const messageId = useRef(0), speechId = useRef(0);
   keyRef.current = openaiKey; usageRef.current = addUsage;
   const setBusyState = (value: boolean) => { busyRef.current = value; setBusy(value); };
   const setRecordingState = (value: boolean) => { recordingRef.current = value; setRecording(value); };
-  const save = (messages: CoachMessage[], nextMemory: CoachMemory) => { try { localStorage.setItem('lucky-coach-state', JSON.stringify({ history: messages.slice(-40), memory: nextMemory })); } catch {} };
+  const saveSession = (messages: CoachMessage[], nextMemory: CoachMemory) => { try { localStorage.setItem('lucky-coach-state', JSON.stringify({ history: messages.slice(-40), memory: nextMemory })); } catch {} };
+  const saveJournal = useCallback((next: CoachJournal) => { journalRef.current = next; setJournal(next); try { localStorage.setItem(JOURNAL_KEY, JSON.stringify(next)); } catch {} }, []);
   const updateHistory = (messages: CoachMessage[]) => { historyRef.current = messages; setHistory(messages); };
   const updateMemory = (nextMemory: CoachMemory) => { memoryRef.current = nextMemory; setMemory(nextMemory); };
 
@@ -35,7 +59,22 @@ export function useCoach(openaiKey: string, addUsage: UsageHandler) {
       }
       if (stored?.memory) updateMemory(cleanMemory(stored.memory));
     } catch {}
-  }, []);
+    saveJournal(readJournal());
+  }, [saveJournal]);
+
+  useEffect(() => {
+    if (!active) return;
+    let last = Date.now();
+    const tick = () => {
+      const now = Date.now(), elapsed = document.visibilityState === 'visible' ? Math.max(0, Math.min(30, (now - last) / 1000)) : 0; last = now;
+      if (!elapsed) return;
+      const today = dateKey(), current = journalRef.current;
+      saveJournal({ ...current, todayDate: today, todaySeconds: (current.todayDate === today ? current.todaySeconds : 0) + elapsed });
+    };
+    const timer = window.setInterval(tick, 5000), visible = () => { last = Date.now(); };
+    document.addEventListener('visibilitychange', visible);
+    return () => { tick(); window.clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
+  }, [active, saveJournal]);
 
   const requestReply = useCallback(async (messages: CoachMessage[], nextMemory: CoachMemory, turnStatus: string, newSession = false) => {
     if (!keyRef.current) { setError('English Coach 需要 OpenAI 密钥'); return false; }
@@ -44,7 +83,7 @@ export function useCoach(openaiKey: string, addUsage: UsageHandler) {
       const result = await coachReplyDirect({ key: keyRef.current, history: messages, memory: nextMemory, turnStatus, newSession, signal: controller.signal });
       const reply = result.data.reply.trim(); if (!reply) throw new Error('English Coach 没有返回回复');
       const updatedMemory = cleanMemory(result.data.memory), updated = [...messages, { id: ++messageId.current, role: 'coach' as const, text: reply }];
-      updateHistory(updated); updateMemory(updatedMemory); setTip(result.data.tip.trim()); save(updated, updatedMemory); usageRef.current(result.usage.tokens, result.usage.cost);
+      updateHistory(updated); updateMemory(updatedMemory); setTip(result.data.tip.trim()); saveSession(updated, updatedMemory); usageRef.current(result.usage.tokens, result.usage.cost);
       setSpeechRequest({ id: ++speechId.current, text: reply }); return true;
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'English Coach 暂时无法回应'); return false; }
     finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
@@ -53,10 +92,9 @@ export function useCoach(openaiKey: string, addUsage: UsageHandler) {
   const submitLearner = useCallback(async (raw: string, fromRecorder = false) => {
     const text = raw.trim().slice(0, 2000); if (!text || busyRef.current || (!fromRecorder && recordingRef.current)) return false;
     const words = text.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g)?.length || 0;
-    const greeting = /^(hi|hello|hey|thanks|thank you|okay|ok|yes|no)[!. ]*$/i.test(text), complete = words >= 4;
-    shortStreak.current = complete || greeting || words === 0 ? 0 : Math.min(3, shortStreak.current + 1);
-    const turnStatus = complete ? 'complete sentence: continue naturally' : shortStreak.current >= 2 ? `short topic-reply streak: ${shortStreak.current}; use a cloze only with a previously taught structure if it truly helps` : greeting ? 'brief social reply: respond naturally, no cloze' : 'first short topic reply: invite one easy detail, no cloze';
-    const next = [...historyRef.current, { id: ++messageId.current, role: 'learner' as const, text }]; updateHistory(next); save(next, memoryRef.current);
+    const greeting = /^(hi|hello|hey|thanks|thank you|okay|ok|yes|no)[!. ]*$/i.test(text);
+    const turnStatus = greeting ? 'brief social reply: respond naturally' : words >= 4 ? 'the learner is expressing a complete idea: follow it and invite depth' : 'short reply: follow its meaning and invite one easy detail; do not infer a lower level or force a scaffold';
+    const next = [...historyRef.current, { id: ++messageId.current, role: 'learner' as const, text }]; updateHistory(next); saveSession(next, memoryRef.current);
     return requestReply(next, memoryRef.current, turnStatus);
   }, [requestReply]);
 
@@ -78,7 +116,7 @@ export function useCoach(openaiKey: string, addUsage: UsageHandler) {
     return () => { abort.current?.abort(); void current.stop(false); };
   }, [submitLearner]);
 
-  const beginSession = useCallback(async () => { abort.current?.abort(); setPractice(undefined); updateHistory([]); setTip(''); shortStreak.current = 0; return requestReply([], memoryRef.current, 'new session', true); }, [requestReply]);
+  const beginSession = useCallback(async () => { abort.current?.abort(); setPractice(undefined); updateHistory([]); setTip(''); return requestReply([], memoryRef.current, 'new session', true); }, [requestReply]);
   const startRecording = useCallback(async () => {
     if (!keyRef.current || busyRef.current || recordingRef.current) { if (!keyRef.current) setError('English Coach 需要 OpenAI 密钥'); return false; }
     setError(''); const started = await recorder.current?.start('hold', false).catch(cause => { setError(cause instanceof Error ? cause.message : '无法开启麦克风'); return false; });
@@ -92,6 +130,31 @@ export function useCoach(openaiKey: string, addUsage: UsageHandler) {
     catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '无法生成练习'); return false; }
     finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
   }, []);
-  const clearSession = useCallback(() => { abort.current?.abort(); void recorder.current?.stop(false); setRecordingState(false); updateHistory([]); setPractice(undefined); setTip(''); setError(''); shortStreak.current = 0; save([], memoryRef.current); }, []);
-  return { history, memory, busy, recording, error, tip, practice, speechRequest, beginSession, sendText: submitLearner, startRecording, stopRecording, createPractice, clearSession, setPractice, setError };
+  const summarizeToday = useCallback(async () => {
+    if (!keyRef.current || busyRef.current) { if (!keyRef.current) setError('总结需要 OpenAI 密钥'); return undefined; }
+    if (!historyRef.current.some(message => message.role === 'learner')) { setError('先完成一小段对话，再生成今日总结'); return undefined; }
+    const controller = new AbortController(); abort.current = controller; setBusyState(true); setError('');
+    try {
+      const today = dateKey(), current = journalRef.current, existing = current.daily.find(item => item.date === today);
+      const result = await coachDailySummaryDirect({ key: keyRef.current, history: historyRef.current, memory: memoryRef.current, existing, signal: controller.signal });
+      usageRef.current(result.usage.tokens, result.usage.cost);
+      const report: CoachDailySummary = { id: `day-${today}`, date: today, minutes: Math.max(1, Math.round(current.todaySeconds / 60)), ...result.data };
+      let next: CoachJournal = { ...current, daily: [...current.daily.filter(item => item.date !== today), report].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 14) };
+      const oldStarts = [...new Set(next.daily.map(item => weekStart(item.date)).filter(start => start < weekStart(today)))].sort();
+      for (const start of oldStarts) {
+        const days = next.daily.filter(item => weekStart(item.date) === start); if (!days.length) continue;
+        const weekly = await coachWeeklySummaryDirect({ key: keyRef.current, daily: days, signal: controller.signal }); usageRef.current(weekly.usage.tokens, weekly.usage.cost);
+        const archive: CoachWeeklySummary = { id: `week-${start}`, startDate: start, endDate: weekEnd(start), minutes: days.reduce((sum, item) => sum + item.minutes, 0), ...weekly.data };
+        next = { ...next, daily: next.daily.filter(item => weekStart(item.date) !== start), weekly: [...next.weekly.filter(item => item.startDate !== start), archive].sort((a, b) => b.startDate.localeCompare(a.startDate)).slice(0, 52) };
+      }
+      saveJournal(next); return report;
+    } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '无法生成今日总结'); return undefined; }
+    finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
+  }, [saveJournal]);
+  const clearSession = useCallback(() => { abort.current?.abort(); void recorder.current?.stop(false); setRecordingState(false); updateHistory([]); setPractice(undefined); setTip(''); setError(''); saveSession([], memoryRef.current); }, []);
+  return {
+    history, memory, busy, recording, error, tip, practice, speechRequest,
+    todaySeconds: journal.todayDate === dateKey() ? journal.todaySeconds : 0, dailySummaries: journal.daily, weeklySummaries: journal.weekly,
+    beginSession, sendText: submitLearner, startRecording, stopRecording, createPractice, summarizeToday, clearSession, setPractice, setError,
+  };
 }

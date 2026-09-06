@@ -218,7 +218,20 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .coach-header > div { display: flex; justify-content: center; align-items: baseline; gap: 8px; }
 .coach-header strong { letter-spacing: .13em; }
 .coach-header span { color: var(--self-accent); font-size: .78rem; }
-.coach-chat { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+.coach-main { flex: 1; min-height: 0; display: grid; grid-template-rows: clamp(142px, 24vh, 210px) minmax(0, 1fr); overflow: hidden; }
+.coach-chat { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px 18px 18px; display: flex; flex-direction: column; gap: 12px; }
+.coach-pet-stage { position: relative; isolation: isolate; display: grid; place-items: center; align-content: center; min-height: 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); background: #dfe5d8 url('/coach-room-day.webp') center / cover no-repeat; overflow: hidden; }
+.coach-pet-stage::after { content: ''; position: absolute; z-index: -1; inset: 0; background: linear-gradient(90deg, #0b1a1230, transparent 28%, transparent 72%, #0b1a1230), linear-gradient(0deg, #0b171055, transparent 45%); pointer-events: none; }
+.coach-pet-button { position: relative; z-index: 1; width: clamp(156px, 34vw, 205px); height: 100%; display: grid; place-items: center; padding: 0; border: 0; background: transparent; border-radius: 22px; touch-action: manipulation; }
+.coach-pet-button:hover { background: #ffffff10; }
+.coach-pet-button:active { transform: scale(.97); }
+.coach-pet-button img { width: clamp(158px, 35vw, 205px); height: clamp(158px, 35vw, 205px); object-fit: contain; transform: translateY(7px); filter: drop-shadow(0 10px 9px #0007); }
+.coach-pet-stage > small { position: absolute; z-index: 2; right: 10px; bottom: 7px; padding: 3px 7px; border-radius: 8px; color: #f5f7f1; background: #0b171099; font-size: .61rem; letter-spacing: .05em; text-transform: uppercase; }
+.pet-voice { position: absolute; right: 0; top: 42px; height: 31px; display: flex; align-items: center; gap: 3px; padding: 5px 7px; border-radius: 13px; background: color-mix(in srgb, var(--partner-surface) 85%, transparent); border: 1px solid var(--partner-border); }
+.pet-voice i { width: 3px; height: 8px; border-radius: 3px; background: var(--partner-accent); animation: pet-talk .6s ease-in-out infinite alternate; }
+.pet-voice i:nth-child(2) { height: 18px; animation-delay: -.25s; }
+.pet-voice i:nth-child(3) { height: 12px; animation-delay: -.4s; }
+@keyframes pet-talk { to { transform: scaleY(.45); } }
 .coach-message { position: relative; max-width: 88%; padding: 12px 42px 12px 14px; border: 1px solid var(--border); border-radius: 18px 18px 18px 5px; background: var(--secondary); }
 .coach-message.learner { align-self: flex-end; padding-right: 14px; border-color: var(--self-border); border-radius: 18px 18px 5px 18px; background: var(--self-surface); }
 .coach-message > span { display: block; margin-bottom: 4px; color: var(--muted-foreground); font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
@@ -238,6 +251,40 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .coach-mic { gap: 8px; touch-action: none; user-select: none; }
 .coach-mic[data-active=true] { background: var(--record-active); }
 .coach-record-hint { margin: 7px 0 10px; color: var(--muted-foreground); text-align: center; font-size: .68rem; }
+.coach-summary-button { align-self: center; height: 26px; margin: -4px auto 5px; padding-inline: 10px; color: var(--self-accent); font-size: .72rem; }
+.summary-spinner { width: 44px; height: 44px; margin: 0 auto 22px; color: var(--primary); }
+.coach-summary, .coach-dashboard { flex: 1; min-height: 0; overflow-y: auto; padding: 20px; }
+.coach-summary > header, .coach-dashboard > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
+.coach-summary > header h1, .coach-dashboard > header h1 { margin: 2px 0; font-size: clamp(1.45rem, 5vw, 2rem); }
+.coach-summary > header small, .coach-dashboard > header small { color: var(--self-accent); font-size: .7rem; font-weight: 800; letter-spacing: .1em; }
+.coach-summary > header span { color: var(--muted-foreground); font-size: .78rem; }
+.recall-content { display: grid; gap: 18px; text-align: left; }
+.recall-overview { margin: 0; padding: 14px; border: 1px solid var(--partner-border); border-radius: 14px; background: var(--partner-surface); line-height: 1.55; }
+.recall-content section h3 { margin: 0 0 8px; color: var(--muted-foreground); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
+.recall-content ul { display: grid; gap: 6px; margin: 0; padding-left: 20px; line-height: 1.5; }
+.recall-table, .recall-mistakes { overflow: hidden; border: 1px solid var(--border); border-radius: 14px; }
+.recall-table > div, .recall-mistakes > article { display: grid; grid-template-columns: minmax(100px, .38fr) 1fr; gap: 12px; padding: 10px 12px; border-top: 1px solid var(--border); line-height: 1.45; }
+.recall-table > div:first-child, .recall-mistakes > article:first-child { border-top: 0; }
+.recall-table strong { color: var(--partner-accent); }
+.recall-table span { color: var(--muted-foreground); }
+.recall-mistakes > article { grid-template-columns: 1fr 1fr; }
+.recall-mistakes del { color: var(--destructive); }
+.recall-mistakes strong { color: var(--partner-accent); }
+.recall-mistakes small { grid-column: 1 / -1; color: var(--muted-foreground); line-height: 1.45; }
+.summary-actions { display: grid; gap: 8px; margin-top: 22px; }
+.summary-actions button { min-height: 48px; border-radius: 14px; }
+.coach-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 18px; }
+.coach-stats article { display: grid; gap: 2px; padding: 12px 9px; border: 1px solid var(--border); border-radius: 14px; background: var(--secondary); text-align: center; }
+.coach-stats strong { color: var(--primary); font-size: 1.4rem; }
+.coach-stats span { color: var(--muted-foreground); font-size: .66rem; }
+.recall-record { margin-top: 10px; border: 1px solid var(--border); border-radius: 16px; background: var(--secondary); overflow: hidden; }
+.recall-record.weekly { border-color: var(--partner-border); }
+.recall-record > summary { display: flex; justify-content: space-between; gap: 10px; padding: 14px; cursor: pointer; font-size: .82rem; }
+.recall-record > summary strong { color: var(--muted-foreground); font-weight: 600; white-space: nowrap; }
+.recall-record > .recall-content { padding: 4px 14px 14px; }
+.recall-record > button { margin: 0 10px 10px; }
+.empty-recall { display: grid; gap: 10px; place-items: center; padding: 28px; border: 1px dashed var(--border); border-radius: 16px; color: var(--muted-foreground); }
+.empty-recall p { margin: 0; }
 .coach-offer, .practice-card { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: stretch; justify-content: center; padding: clamp(22px, 7vw, 48px); text-align: center; }
 .practice-mark { width: 58px; height: 58px; margin: 0 auto 18px; display: grid; place-items: center; border-radius: 18px; background: var(--record-active); color: var(--primary-foreground); }
 .coach-offer h1 { margin: 0 0 10px; font-size: 2rem; }
@@ -278,4 +325,7 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
   .status-line { min-height: 18px; margin-top: 2px; }
   .transcript-stack { padding: 4px 0; gap: 6px; }
   .app-footer { min-height: 40px; padding-top: 0; }
+  .coach-main { grid-template-rows: 132px minmax(0, 1fr); }
+  .coach-pet-button img { width: 150px; height: 150px; }
 }
+.coach-pet-stage.night { background-image: url('/coach-room-night.webp'); background-color: #0b1513; }
