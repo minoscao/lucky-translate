@@ -176,6 +176,7 @@ export default function Home() {
   const visibleDialog = t.needsSettings ? 'settings' : dialog;
   useEffect(() => {
     void accountRequest<{ account: AccountSnapshot | null }>('/api/auth').then(data => setAccount(data.account)).catch(() => { setAccount(null); setAuthError('暂时无法读取账户，请刷新后重试'); });
+    try { localStorage.removeItem('lucky-openai-key'); localStorage.removeItem('lucky-custom-voice'); localStorage.removeItem('lucky-voice-setup-dismissed'); } catch {}
     queueMicrotask(() => { setInstalled(window.matchMedia('(display-mode: standalone)').matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone)); });
     queueMicrotask(() => { const speed = Number(localStorage.getItem('lucky-speech-speed')); if ([.75, 1, 1.5, 2].includes(speed)) setSpeechSpeed(speed); });
     queueMicrotask(() => { const layout = localStorage.getItem('lucky-layout'); if (layout === 'single-operator' || layout === 'same-direction') setLayoutMode('single-operator'); });

@@ -1,7 +1,7 @@
 'use client';
 /* oxlint-disable jsx-a11y/label-has-associated-control, jsx-a11y/prefer-tag-over-role -- Base UI Select fields and the compact responsive data grid keep their own accessible names. */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, KeyRound, LoaderCircle, LogOut, RefreshCw, ShieldCheck, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -59,9 +59,20 @@ function UserEditor({ user, refresh }: { user: AdminUser; refresh: (data: AdminD
 export default function AdminPage() {
   const [data, setData] = useState<AdminData>(), [password, setPassword] = useState(''), [apiKey, setApiKey] = useState('');
   const [multiplier, setMultiplier] = useState('1.0');
+  const legacyImportTried = useRef(false);
   const [loading, setLoading] = useState(true), [error, setError] = useState(''), [savingKey, setSavingKey] = useState(false);
   const load = async () => { setLoading(true); try { const next = await accountRequest<AdminData>('/api/admin'); setData(next); setMultiplier(String(next.costMultiplier)); setError(''); } catch { setData(undefined); } finally { setLoading(false); } };
   useEffect(() => { queueMicrotask(() => void load()); }, []);
+  useEffect(() => {
+    if (!data?.authenticated || data.deepseekConfigured || legacyImportTried.current) return;
+    legacyImportTried.current = true;
+    const legacyKey = localStorage.getItem('lucky-deepseek-key')?.trim();
+    localStorage.removeItem('lucky-openai-key'); localStorage.removeItem('lucky-custom-voice'); localStorage.removeItem('lucky-voice-setup-dismissed');
+    if (!legacyKey) return;
+    void accountRequest<AdminData>('/api/admin', { method: 'POST', body: JSON.stringify({ action: 'set_deepseek_key', key: legacyKey }) }).then(next => {
+      localStorage.removeItem('lucky-deepseek-key'); localStorage.removeItem('lucky-translation-provider'); setData(next);
+    }).catch(cause => { setError(cause instanceof Error ? cause.message : '无法导入本设备原有密钥'); });
+  }, [data?.authenticated, data?.deepseekConfigured]);
   const login = async (event: React.SyntheticEvent<HTMLFormElement>) => { event.preventDefault(); setLoading(true); setError(''); try { const next = await accountRequest<AdminData>('/api/admin', { method: 'POST', body: JSON.stringify({ action: 'login', password }) }); setData(next); setMultiplier(String(next.costMultiplier)); setPassword(''); } catch (cause) { setError(cause instanceof Error ? cause.message : '无法登录'); } finally { setLoading(false); } };
   const saveKey = async (event: React.SyntheticEvent<HTMLFormElement>) => { event.preventDefault(); setSavingKey(true); setError(''); try { const next = await accountRequest<AdminData>('/api/admin', { method: 'POST', body: JSON.stringify({ action: 'set_deepseek_key', key: apiKey }) }); setData(next); setApiKey(''); } catch (cause) { setError(cause instanceof Error ? cause.message : '无法保存'); } finally { setSavingKey(false); } };
   const saveMultiplier = async () => { try { const next = await accountRequest<AdminData>('/api/admin', { method: 'POST', body: JSON.stringify({ action: 'set_cost_multiplier', multiplier: Number(multiplier) }) }); setData(next); setMultiplier(String(next.costMultiplier)); } catch (cause) { setError(cause instanceof Error ? cause.message : '无法保存'); } };
