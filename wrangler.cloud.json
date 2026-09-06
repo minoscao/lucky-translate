@@ -1,0 +1,23 @@
+{
+  "name": "luckytranslate",
+  "account_id": "660184157223097c9afd3d253ec86ce6",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "luckytranslate-db",
+      "database_id": "5493504a-96c5-44f5-83bb-e526c8f04a38"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "assets": {
+    "directory": "dist/client"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
