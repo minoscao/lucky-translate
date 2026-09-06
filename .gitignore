@@ -38,3 +38,5 @@ next-env.d.ts
 /work/
 /.playwright-cli/
 *.tsbuildinfo
+lucky-site-*.tar.gz
+*-preview.jpg
