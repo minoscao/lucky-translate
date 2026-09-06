@@ -109,6 +109,8 @@ test('managed service architecture keeps API keys on the server and uses the con
   assert.match(speech, /@cf\/myshell-ai\/melotts/);
   assert.match(speech, /audio\/wav/);
   assert.match(speech, /'zh-CN': 'ZH'/);
+  const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
+  assert.match(page, /lang\.startsWith\('zh'\) && 'speechSynthesis' in window/);
 });
 
 test('translation and coaching time are charged in full while summaries are charged at ten percent', async () => {

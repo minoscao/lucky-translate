@@ -277,6 +277,7 @@ export default function Home() {
   const editSentence = (side: 0 | 1, id: number, text: string) => { setEditingId(id); setDraftText(text); open('edit', side); };
   const stopSpeech = useCallback(() => {
     speechRequest.current++; speechAbort.current?.abort(); speechAbort.current = undefined;
+    window.speechSynthesis?.cancel();
     const audio = speechAudio.current; if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
     if (speechUrl.current) URL.revokeObjectURL(speechUrl.current); speechUrl.current = ''; setSpeaking(false);
   }, []);
@@ -284,6 +285,14 @@ export default function Home() {
     stopSpeech();
     const requestId = ++speechRequest.current, abort = new AbortController(); speechAbort.current = abort; setSpeaking(true);
     try {
+      if (lang.startsWith('zh') && 'speechSynthesis' in window) {
+        const speech = new SpeechSynthesisUtterance(text); speech.lang = lang; speech.rate = speechSpeed;
+        const voices = window.speechSynthesis.getVoices(), voice = voices.find(item => item.lang.toLowerCase().startsWith(lang.toLowerCase())) || voices.find(item => item.lang.toLowerCase().startsWith('zh'));
+        if (voice) speech.voice = voice;
+        speech.onend = () => { if (requestId === speechRequest.current) stopSpeech(); };
+        speech.onerror = () => { if (requestId === speechRequest.current) { stopSpeech(); reportError('中文朗读失败，请检查设备语音设置'); } };
+        window.speechSynthesis.speak(speech); return;
+      }
       const result = await synthesizeSpeechDirect({ text, language: lang, speed: speechSpeed, signal: abort.signal });
       addUsage(result.usage.tokens, result.usage.cost); if (requestId !== speechRequest.current) return;
       const url = URL.createObjectURL(result.audio), audio = new Audio(url);
