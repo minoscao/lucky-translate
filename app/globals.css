@@ -142,7 +142,8 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .transcript-viewport::-webkit-scrollbar { display: none; }
 .transcript-viewport:focus-visible { outline: 2px solid var(--side-color); outline-offset: 2px; }
 .transcript-stack { display: flex; flex-direction: column; justify-content: flex-end; min-height: 100%; padding: 14px 0; gap: 16px; }
-.transcript-line { margin: 0; flex-shrink: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.transcript-line { margin: 0; padding: 2px 4px; width: 100%; flex-shrink: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; text-align: start; border: 0; border-radius: 8px; background: transparent; color: inherit; }
+.transcript-line:hover:not(:disabled), .transcript-line:focus-visible { background: color-mix(in srgb, var(--side-color) 9%, transparent); }
 .transcript-line.previous { color: var(--muted-foreground); font-size: .9375rem; }
 .transcript-line.current { color: var(--foreground); font-size: clamp(1.5rem, 4vw, 2.125rem); letter-spacing: -.025em; }
 .transcript-line.empty { color: var(--muted-foreground); margin-block: auto; }
@@ -158,6 +159,8 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .conversation-dialog .history-list { flex: 1; min-height: 0; max-height: none; overscroll-behavior: contain; }
 .conversation-actions { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--border); }
 .conversation-actions > button { flex: 1; }
+.edit-form { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.edit-input { flex: 1; min-height: 180px; resize: none; font-size: 1.25rem; line-height: 1.65; }
 .credential-actions { display: grid; gap: 8px; }
 .clear-key { color: var(--muted-foreground); }
 .usage-meter { display: flex; align-items: baseline; gap: 7px; margin-inline: auto; color: var(--side-color); white-space: nowrap; }
@@ -165,3 +168,7 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .usage-meter span { font-size: .6875rem; color: var(--muted-foreground); }
 @media (max-width: 520px) { .usage-meter { order: 3; width: 100%; justify-content: center; } .panel-head { flex-wrap: wrap; } }
 @media (max-width: 440px) { .history-entry span { display: none; } .deck-top .wordmark { margin-right: auto; } }
+@media (max-width: 600px) {
+  .edit-dialog { inset: 0; top: 0 !important; left: 0 !important; translate: none !important; width: 100vw; max-width: none; height: 100dvh; max-height: none; border: 0; border-radius: 0; padding: max(20px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom)); }
+  .edit-dialog .edit-input { min-height: 0; }
+}

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { createConversationStore, language, Pair, RecordGesture, RecordMode, Translation } from '@/lib/translation';
 import { VoiceRecorder } from '@/lib/voice-recorder';
 
-type Job = { audio?: Blob; text?: string; pair: Pair };
+type Job = { audio?: Blob; text?: string; pair: Pair; replaceId?: number };
 export function useTranslator() {
   const [pair, setPair] = useState<Pair>(['en', 'zh-CN']);
   const [selfOnTop, setSelfOnTop] = useState(false);
@@ -51,7 +51,7 @@ export function useTranslator() {
     pumping.current = true; setPending(queue.current.length + 1);
     const timeout = setTimeout(() => abort.abort('timeout'), 65000);
     const form = new FormData(); form.set('upper', job.pair[0]); form.set('lower', job.pair[1]);
-    form.set('context', JSON.stringify(conversation.context()));
+    form.set('context', JSON.stringify(conversation.context(job.replaceId)));
     if (job.audio) form.set('audio', job.audio, 'speech.wav'); else form.set('text', job.text || '');
     fetch('/api/translate', { method: 'POST', body: form, headers: { 'x-translation-key': live.current.credential }, signal: abort.signal })
       .then(async response => {
@@ -64,7 +64,8 @@ export function useTranslator() {
         const result: Translation = { upper: data.upper, lower: data.lower, original: data.original, pair: job.pair, id: Date.now() };
         const received = data.usage && typeof data.usage === 'object' ? data.usage as Record<string, unknown> : {};
         setUsage(current => ({ tokens: current.tokens + (typeof received.tokens === 'number' && Number.isFinite(received.tokens) ? Math.max(0, received.tokens) : 0), cost: current.cost + (typeof received.cost === 'number' && Number.isFinite(received.cost) ? Math.max(0, received.cost) : 0) }));
-        conversation.append(result); setNotice('');
+        if (job.replaceId !== undefined) conversation.replace(job.replaceId, { ...result, id: job.replaceId }); else conversation.append(result);
+        setNotice(job.replaceId !== undefined ? '已保存并重新翻译' : '');
       })
       .catch(cause => {
         if (token !== generation.current || !mounted.current) return;
@@ -173,6 +174,7 @@ export function useTranslator() {
     failed, retry: () => { if (failed) { setError(''); const job = failed; setFailed(undefined); enqueue(job); } },
     clear: () => { cancel(); conversation.clear(); setUsage({ tokens: 0, cost: 0 }); setError(''); setFailed(undefined); setNotice('已清空本次对话及用量'); },
     submitText: (text: string) => { if (!credential) { setNeedsSettings(true); return false; } setError(''); enqueue({ text, pair: [...pair] }); return true; },
+    retranslate: (id: number, text: string) => { if (!credential) { setNeedsSettings(true); return false; } setError(''); enqueue({ text, pair: [...pair], replaceId: id }); return true; },
     stop, toggle, pointerDown, pointerUp, setError,
   };
 }

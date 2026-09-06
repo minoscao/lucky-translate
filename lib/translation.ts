@@ -36,8 +36,12 @@ export function createConversationStore() {
     snapshot: () => items,
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     append: (item: Translation) => { items = [...items, item]; publish(); },
+    replace: (id: number, item: Translation) => { items = items.map(current => current.id === id ? item : current); publish(); },
     clear: () => { items = []; publish(); },
-    context: () => items.slice(-CONTEXT_LIMITS.turns).map(item => item.original.slice(0, CONTEXT_LIMITS.characters)),
+    context: (beforeId?: number) => {
+      const eligible = beforeId === undefined ? items : items.slice(0, items.findIndex(item => item.id === beforeId));
+      return eligible.slice(-CONTEXT_LIMITS.turns).map(item => item.original.slice(0, CONTEXT_LIMITS.characters));
+    },
   };
 }
 export function transcriptForLanguage(history: Translation[], code: LanguageCode) {

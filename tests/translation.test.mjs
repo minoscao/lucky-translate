@@ -152,8 +152,11 @@ test('the next queued request sees the completed turn immediately; full export r
   store.append({ id: 56, original: '长'.repeat(2000), upper: 'Long', lower: '长', pair: ['en', 'zh-CN'] });
   assert.equal(store.context().at(-1).length, CONTEXT_LIMITS.characters);
   assert.equal(store.snapshot().at(-1).original.length, 2000, 'context limit must not truncate the export');
+  store.replace(55, { id: 55, original: '改过的原句', upper: 'Edited', lower: '已修改', pair: ['en', 'zh-CN'] });
+  assert.equal(store.snapshot().length, 56); assert.equal(store.snapshot().find(item => item.id === 55).original, '改过的原句');
+  assert.deepEqual(store.context(55), ['原句49', '原句50', '原句51', '原句52', '原句53', '原句54']);
   store.clear(); assert.deepEqual(store.snapshot(), []); assert.deepEqual(store.context(), []);
-  assert.equal(notifications, 57); unsubscribe(); store.clear(); assert.equal(notifications, 57);
+  assert.equal(notifications, 58); unsubscribe(); store.clear(); assert.equal(notifications, 58);
 });
 
 test('recent original conversation is sent as data for interpreting only the current utterance', async () => {
