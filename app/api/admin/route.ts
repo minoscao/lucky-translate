@@ -32,13 +32,13 @@ export async function POST(request: Request) {
     await requireAdmin(request);
     if (body.action === 'set_deepseek_key') {
       await setDeepSeekKey(typeof body.key === 'string' ? body.key : '');
-      return json({ saved: true, ...(await dashboard()) });
+      return json({ authenticated: true, saved: true, ...(await dashboard()) });
     }
     if (body.action === 'set_cost_multiplier') {
       const multiplier = Number(body.multiplier);
       if (!Number.isFinite(multiplier) || multiplier < .1 || multiplier > 100) return json({ error: '费用倍率需在 0.1 到 100 之间' }, 400);
       await getDb().prepare("INSERT INTO app_config (key, value, updated_at) VALUES ('cost_multiplier', ?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").bind(multiplier.toFixed(2), Date.now()).run();
-      return json({ saved: true, ...(await dashboard()) });
+      return json({ authenticated: true, saved: true, ...(await dashboard()) });
     }
     if (body.action === 'update_user') {
       const id = typeof body.id === 'string' ? body.id : '', level = body.level === 'lv1' || body.level === 'lv2' || body.level === 'lv3' ? body.level : null;
@@ -52,7 +52,7 @@ export async function POST(request: Request) {
       const note = typeof body.adminNote === 'string' ? body.adminNote.trim().slice(0, 500) : current.admin_note, now = Date.now();
       await getDb().prepare(`UPDATE users SET status = ?1, level = ?2, daily_seconds_limit = ?3, monthly_seconds_limit = ?4, daily_token_limit = ?5, monthly_price_cents = ?6, membership_expires_at = ?7, admin_note = ?8, updated_at = ?9 WHERE id = ?10`)
         .bind(status, level || current.level, dailySeconds, monthlySeconds, dailyTokens, priceCents, expires, note, now, id).run();
-      return json({ saved: true, ...(await dashboard()) });
+      return json({ authenticated: true, saved: true, ...(await dashboard()) });
     }
     if (body.action === 'reset_password') {
       const id = typeof body.id === 'string' ? body.id : '', password = typeof body.password === 'string' ? body.password : '';
