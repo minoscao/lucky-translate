@@ -1,0 +1,97 @@
+'use client';
+/* oxlint-disable react/react-compiler -- controller refs deliberately expose current async state to stable recorder callbacks */
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { coachPracticeDirect, coachReplyDirect, CoachExercise, CoachMemory, CoachMessage, EMPTY_COACH_MEMORY } from '@/lib/coach';
+import { transcribeDirect } from '@/lib/direct-api';
+import { VoiceRecorder } from '@/lib/voice-recorder';
+
+type UsageHandler = (tokens: number, cost: number) => void;
+const cleanMemory = (memory: CoachMemory): CoachMemory => ({
+  level: String(memory.level || 'discovering').slice(0, 80), topics: (memory.topics || []).map(String).slice(-12),
+  strengths: (memory.strengths || []).map(String).slice(-12), focus: (memory.focus || []).map(String).slice(-12), phrases: (memory.phrases || []).map(String).slice(-20),
+});
+
+export function useCoach(openaiKey: string, addUsage: UsageHandler) {
+  const [history, setHistory] = useState<CoachMessage[]>([]), [memory, setMemory] = useState<CoachMemory>(EMPTY_COACH_MEMORY);
+  const [busy, setBusy] = useState(false), [recording, setRecording] = useState(false), [error, setError] = useState(''), [tip, setTip] = useState('');
+  const [practice, setPractice] = useState<{ title: string; exercises: CoachExercise[] }>(), [speechRequest, setSpeechRequest] = useState<{ id: number; text: string }>();
+  const recorder = useRef<VoiceRecorder | undefined>(undefined), abort = useRef<AbortController | undefined>(undefined), keyRef = useRef(openaiKey), usageRef = useRef(addUsage);
+  const historyRef = useRef<CoachMessage[]>([]), memoryRef = useRef<CoachMemory>(EMPTY_COACH_MEMORY), busyRef = useRef(false), recordingRef = useRef(false);
+  const messageId = useRef(0), speechId = useRef(0), shortStreak = useRef(0);
+  keyRef.current = openaiKey; usageRef.current = addUsage;
+  const setBusyState = (value: boolean) => { busyRef.current = value; setBusy(value); };
+  const setRecordingState = (value: boolean) => { recordingRef.current = value; setRecording(value); };
+  const save = (messages: CoachMessage[], nextMemory: CoachMemory) => { try { localStorage.setItem('lucky-coach-state', JSON.stringify({ history: messages.slice(-40), memory: nextMemory })); } catch {} };
+  const updateHistory = (messages: CoachMessage[]) => { historyRef.current = messages; setHistory(messages); };
+  const updateMemory = (nextMemory: CoachMemory) => { memoryRef.current = nextMemory; setMemory(nextMemory); };
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('lucky-coach-state') || 'null');
+      if (Array.isArray(stored?.history)) {
+        const messages = stored.history.filter((item: CoachMessage) => (item?.role === 'learner' || item?.role === 'coach') && typeof item.text === 'string').slice(-40);
+        updateHistory(messages); messageId.current = Math.max(0, ...messages.map((item: CoachMessage) => Number(item.id) || 0));
+      }
+      if (stored?.memory) updateMemory(cleanMemory(stored.memory));
+    } catch {}
+  }, []);
+
+  const requestReply = useCallback(async (messages: CoachMessage[], nextMemory: CoachMemory, turnStatus: string, newSession = false) => {
+    if (!keyRef.current) { setError('English Coach 需要 OpenAI 密钥'); return false; }
+    abort.current?.abort(); const controller = new AbortController(); abort.current = controller; setBusyState(true); setError(''); setTip('');
+    try {
+      const result = await coachReplyDirect({ key: keyRef.current, history: messages, memory: nextMemory, turnStatus, newSession, signal: controller.signal });
+      const reply = result.data.reply.trim(); if (!reply) throw new Error('English Coach 没有返回回复');
+      const updatedMemory = cleanMemory(result.data.memory), updated = [...messages, { id: ++messageId.current, role: 'coach' as const, text: reply }];
+      updateHistory(updated); updateMemory(updatedMemory); setTip(result.data.tip.trim()); save(updated, updatedMemory); usageRef.current(result.usage.tokens, result.usage.cost);
+      setSpeechRequest({ id: ++speechId.current, text: reply }); return true;
+    } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'English Coach 暂时无法回应'); return false; }
+    finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
+  }, []);
+
+  const submitLearner = useCallback(async (raw: string, fromRecorder = false) => {
+    const text = raw.trim().slice(0, 2000); if (!text || busyRef.current || (!fromRecorder && recordingRef.current)) return false;
+    const words = text.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g)?.length || 0;
+    const greeting = /^(hi|hello|hey|thanks|thank you|okay|ok|yes|no)[!. ]*$/i.test(text), complete = words >= 4;
+    shortStreak.current = complete || greeting || words === 0 ? 0 : Math.min(3, shortStreak.current + 1);
+    const turnStatus = complete ? 'complete sentence: continue naturally' : shortStreak.current >= 2 ? `short topic-reply streak: ${shortStreak.current}; use a cloze only with a previously taught structure if it truly helps` : greeting ? 'brief social reply: respond naturally, no cloze' : 'first short topic reply: invite one easy detail, no cloze';
+    const next = [...historyRef.current, { id: ++messageId.current, role: 'learner' as const, text }]; updateHistory(next); save(next, memoryRef.current);
+    return requestReply(next, memoryRef.current, turnStatus);
+  }, [requestReply]);
+
+  useEffect(() => {
+    const current = new VoiceRecorder({
+      onSentence: audio => {
+        if (busyRef.current) return;
+        const controller = new AbortController(); abort.current = controller; setBusyState(true); setError('');
+        void transcribeDirect(audio, keyRef.current, controller.signal).then(result => {
+          usageRef.current(result.usage.tokens, result.usage.cost);
+          if (!result.text) { setError('没有听清，请再说一次'); return false; }
+          if (abort.current === controller) { abort.current = undefined; setBusyState(false); }
+          return submitLearner(result.text, true);
+        }).catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '语音识别失败'); })
+          .finally(() => { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } });
+      }, onLevel: () => {}, onError: message => { setError(message); setRecordingState(false); },
+    });
+    recorder.current = current;
+    return () => { abort.current?.abort(); void current.stop(false); };
+  }, [submitLearner]);
+
+  const beginSession = useCallback(async () => { abort.current?.abort(); setPractice(undefined); updateHistory([]); setTip(''); shortStreak.current = 0; return requestReply([], memoryRef.current, 'new session', true); }, [requestReply]);
+  const startRecording = useCallback(async () => {
+    if (!keyRef.current || busyRef.current || recordingRef.current) { if (!keyRef.current) setError('English Coach 需要 OpenAI 密钥'); return false; }
+    setError(''); const started = await recorder.current?.start('hold', false).catch(cause => { setError(cause instanceof Error ? cause.message : '无法开启麦克风'); return false; });
+    setRecordingState(Boolean(started)); return Boolean(started);
+  }, []);
+  const stopRecording = useCallback(async () => { if (!recordingRef.current) return; setRecordingState(false); await recorder.current?.stop(); }, []);
+  const createPractice = useCallback(async () => {
+    if (!keyRef.current || busyRef.current) { if (!keyRef.current) setError('练习需要 OpenAI 密钥'); return false; }
+    const controller = new AbortController(); abort.current = controller; setBusyState(true); setError('');
+    try { const result = await coachPracticeDirect({ key: keyRef.current, history: historyRef.current, memory: memoryRef.current, signal: controller.signal }); setPractice(result.data); usageRef.current(result.usage.tokens, result.usage.cost); return true; }
+    catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '无法生成练习'); return false; }
+    finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
+  }, []);
+  const clearSession = useCallback(() => { abort.current?.abort(); void recorder.current?.stop(false); setRecordingState(false); updateHistory([]); setPractice(undefined); setTip(''); setError(''); shortStreak.current = 0; save([], memoryRef.current); }, []);
+  return { history, memory, busy, recording, error, tip, practice, speechRequest, beginSession, sendText: submitLearner, startRecording, stopRecording, createPractice, clearSession, setPractice, setError };
+}

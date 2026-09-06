@@ -86,8 +86,10 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .compact-record .record-button svg { display: block; width: 24px !important; height: 24px !important; }
 .compact-record .button-copy, .compact-record .meter, .compact-record .lock-icon { display: none; }
 .solo-direction { display: grid; grid-template-columns: 1fr 1fr; min-width: 0; padding: 5px; border: 1px solid var(--border); border-radius: 24px; background: var(--card); }
-.solo-direction [data-slot=button] { min-width: 0; height: 54px; border-radius: 19px; color: var(--foreground); font-size: clamp(1rem, 4.5vw, 1.25rem); }
+.solo-direction [data-slot=button] { min-width: 0; height: 54px; border-radius: 19px; color: var(--foreground); font-size: clamp(1rem, 4.5vw, 1.25rem); gap: 8px; touch-action: none; user-select: none; }
+.solo-direction [data-slot=button] svg { width: 20px; height: 20px; }
 .solo-direction [data-slot=button][data-active=true] { background: color-mix(in srgb, var(--self-accent) 28%, var(--secondary)); color: var(--self-accent); }
+.solo-direction [data-slot=button][data-recording=true] { background: var(--record-active); color: var(--primary-foreground); }
 .solo-direction [data-slot=button]:active:not(:disabled) { transform: scale(.98); }
 .side-swap { height: 48px; width: 62px; border-radius: 16px; flex-direction: column; gap: 2px; background: var(--secondary); border-color: var(--border); flex-shrink: 0; }
 .side-swap svg { width: 23px !important; height: 23px !important; }
@@ -199,6 +201,63 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .usage-details article > strong { color: var(--primary); font-size: 1.25rem; }
 .usage-details article > small { grid-column: 1 / -1; color: var(--muted-foreground); font-size: .75rem; }
 .usage-details > p { display: flex; justify-content: space-between; margin: 4px 0 0; padding: 0 4px; color: var(--muted-foreground); font-size: .8125rem; }
+.mode-page, .coach-page { height: 100svh; height: 100dvh; min-height: 0; display: grid; place-items: center; padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); overflow: hidden; }
+.mode-card { width: min(100%, 440px); padding: 28px; border: 1px solid var(--border); border-radius: 28px; background: var(--card); box-shadow: 0 24px 80px #0006; text-align: center; }
+.mode-brand { margin: 18px 0 5px; color: var(--primary); font-weight: 900; letter-spacing: .16em; }
+.mode-card h1 { margin: 0 0 24px; font-size: clamp(1.45rem, 6vw, 2rem); }
+.mode-options { display: grid; gap: 12px; }
+.mode-options [data-slot=button] { height: auto; min-height: 86px; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; padding: 16px 18px; border-radius: 18px; text-align: left; white-space: normal; }
+.mode-options strong { font-size: 1.15rem; }
+.mode-options span { color: currentColor; opacity: .72; font-size: .78rem; line-height: 1.45; }
+.mode-settings { margin-top: 14px; color: var(--muted-foreground); }
+.mode-return { padding-inline: 7px; color: var(--muted-foreground); font-size: .72rem; }
+.mode-return svg { width: 14px; }
+.coach-shell { width: min(100%, 660px); height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 26px; background: var(--card); }
+.coach-header { min-height: 58px; display: grid; grid-template-columns: 48px 1fr 48px; align-items: center; padding: 5px 10px; border-bottom: 1px solid var(--border); }
+.coach-header > div { display: flex; justify-content: center; align-items: baseline; gap: 8px; }
+.coach-header strong { letter-spacing: .13em; }
+.coach-header span { color: var(--self-accent); font-size: .78rem; }
+.coach-chat { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+.coach-message { position: relative; max-width: 88%; padding: 12px 42px 12px 14px; border: 1px solid var(--border); border-radius: 18px 18px 18px 5px; background: var(--secondary); }
+.coach-message.learner { align-self: flex-end; padding-right: 14px; border-color: var(--self-border); border-radius: 18px 18px 5px 18px; background: var(--self-surface); }
+.coach-message > span { display: block; margin-bottom: 4px; color: var(--muted-foreground); font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+.coach-message p { margin: 0; font-size: 1rem; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.coach-speak { position: absolute; right: 3px; bottom: 3px; color: var(--partner-accent); }
+.coach-speak svg { width: 17px; }
+.coach-thinking { display: flex; gap: 8px; align-items: center; color: var(--muted-foreground); font-size: .82rem; }
+.coach-thinking svg { width: 16px; }
+.coach-tip, .coach-error { margin: 0 16px 8px; padding: 8px 12px; border-radius: 10px; background: color-mix(in srgb, var(--self-accent) 8%, transparent); color: var(--muted-foreground); font-size: .77rem; line-height: 1.45; }
+.coach-tip strong { color: var(--self-accent); margin-right: 5px; }
+.coach-error { color: var(--destructive); background: color-mix(in srgb, var(--destructive) 8%, transparent); }
+.coach-compose { display: grid; grid-template-columns: 1fr 48px; gap: 8px; padding: 0 14px 10px; }
+.coach-compose input { height: 48px; border-radius: 15px; background: var(--background); }
+.coach-compose button { border-radius: 15px; }
+.coach-actions { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 8px; padding: 0 14px; }
+.coach-actions button { min-height: 52px; border-radius: 17px; }
+.coach-mic { gap: 8px; touch-action: none; user-select: none; }
+.coach-mic[data-active=true] { background: var(--record-active); }
+.coach-record-hint { margin: 7px 0 10px; color: var(--muted-foreground); text-align: center; font-size: .68rem; }
+.coach-offer, .practice-card { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: stretch; justify-content: center; padding: clamp(22px, 7vw, 48px); text-align: center; }
+.practice-mark { width: 58px; height: 58px; margin: 0 auto 18px; display: grid; place-items: center; border-radius: 18px; background: var(--record-active); color: var(--primary-foreground); }
+.coach-offer h1 { margin: 0 0 10px; font-size: 2rem; }
+.coach-offer > p { margin: 0 auto 24px; color: var(--muted-foreground); line-height: 1.6; max-width: 390px; }
+.coach-offer > button { width: min(100%, 360px); min-height: 50px; margin: 5px auto; border-radius: 15px; }
+.practice-card { justify-content: flex-start; text-align: left; }
+.practice-card > header { display: flex; justify-content: space-between; color: var(--muted-foreground); }
+.practice-card > header span { color: var(--primary); font-weight: 700; }
+.practice-card h1 { margin: clamp(28px, 9vh, 72px) 0 24px; font-size: clamp(1.45rem, 6vw, 2.15rem); line-height: 1.45; white-space: pre-wrap; }
+.word-clue { display: grid; gap: 5px; margin: 0 0 18px; color: var(--muted-foreground); line-height: 1.5; }
+.word-clue strong { color: var(--self-accent); }
+.practice-options { display: grid; gap: 10px; }
+.practice-options button { height: auto; min-height: 52px; justify-content: flex-start; padding: 12px 16px; border-radius: 14px; text-align: left; white-space: normal; line-height: 1.45; }
+.practice-options button[data-selected=true] { border-color: var(--self-accent); background: color-mix(in srgb, var(--self-accent) 14%, var(--secondary)); }
+.practice-feedback { margin-top: 18px; padding: 14px; border: 1px solid var(--partner-border); border-radius: 14px; background: var(--partner-surface); }
+.practice-feedback.wrong { border-color: color-mix(in srgb, var(--destructive) 65%, var(--border)); background: color-mix(in srgb, var(--destructive) 8%, var(--card)); }
+.practice-feedback strong { color: var(--partner-accent); }
+.practice-feedback.wrong strong { color: var(--destructive); }
+.practice-feedback p { margin: 6px 0 0; color: var(--muted-foreground); line-height: 1.5; }
+.practice-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 28px; }
+.practice-actions button { min-width: 112px; border-radius: 14px; }
 @media (max-width: 520px) { .panel-head { flex-wrap: nowrap; } .usage-meter { padding-inline: 6px; } }
 @media (max-width: 440px) { .history-entry span { display: none; } .deck-top .wordmark { margin-right: auto; } }
 @media (max-width: 600px) {

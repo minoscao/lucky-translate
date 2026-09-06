@@ -358,3 +358,30 @@ test('the internal-test password works when Cloudflare has no environment variab
     assert.equal(response.status, 200); assert.deepEqual(await response.json(), { unlocked: true });
   } finally { if (previous !== undefined) process.env.SITE_PASSWORD = previous; }
 });
+
+const coachSource = await readFile(new URL('../lib/coach.ts', import.meta.url), 'utf8');
+const coachJs = ts.transpile(coachSource, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext });
+const coachApi = await import('data:text/javascript;base64,' + Buffer.from(coachJs).toString('base64'));
+test('English Coach uses the lightweight model and carries the learner conversation and memory', async () => {
+  const oldFetch = globalThis.fetch; let request;
+  globalThis.fetch = async (_url, options) => {
+    request = JSON.parse(options.body);
+    return Response.json({ choices: [{ message: { content: JSON.stringify({ reply: 'What happened next?', tip: 'Use the past tense.', memory: { level: 'A2', topics: ['travel'], strengths: ['clear ideas'], focus: ['past tense'], phrases: ['I went to'] } }) } }], usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, prompt_tokens_details: { cached_tokens: 20 } } });
+  };
+  try {
+    const result = await coachApi.coachReplyDirect({ key: 'openai-key', history: [{ id: 1, role: 'learner', text: 'I go to Paris last year.' }], memory: { level: 'A1', topics: ['travel'], strengths: [], focus: [], phrases: [] }, turnStatus: 'complete sentence', signal: new AbortController().signal });
+    assert.equal(request.model, 'gpt-4o-mini'); assert.equal(request.response_format.type, 'json_schema'); assert.equal(request.response_format.json_schema.strict, true);
+    assert.match(request.messages[0].content, /natural conversation/); assert.match(request.messages[1].content, /I go to Paris/); assert.match(request.messages.at(-1).content, /complete sentence/);
+    assert.equal(result.data.reply, 'What happened next?'); assert.equal(result.usage.tokens, 110); assert.ok(Math.abs(result.usage.cost - .0000195) < 1e-12);
+  } finally { globalThis.fetch = oldFetch; }
+});
+test('post-conversation practice requests two cloze, two meaning and two grammar exercises', async () => {
+  const oldFetch = globalThis.fetch; let request;
+  const exercise = (type, prompt) => ({ type, prompt, answer: 'answer', initial: type === 'cloze' ? 'a' : '', definition: type === 'cloze' ? 'a simple definition' : '', options: type === 'cloze' ? [] : ['answer', 'wrong one', 'wrong two'], explanation: 'Plain English explanation.' });
+  globalThis.fetch = async (_url, options) => { request = JSON.parse(options.body); return Response.json({ choices: [{ message: { content: JSON.stringify({ title: 'Your travel practice', exercises: [exercise('cloze', 'One _____.'), exercise('meaning', 'journey'), exercise('grammar', 'Choose a sentence'), exercise('cloze', 'Two _____.'), exercise('meaning', 'friendly'), exercise('grammar', 'Choose another sentence')] }) } }], usage: { total_tokens: 60 } }); };
+  try {
+    const result = await coachApi.coachPracticeDirect({ key: 'openai-key', history: [{ id: 1, role: 'learner', text: 'I enjoyed my journey.' }], memory: { level: 'A2', topics: ['travel'], strengths: [], focus: [], phrases: [] }, signal: new AbortController().signal });
+    const prompt = request.messages.at(-1).content; assert.equal(request.model, 'gpt-4o-mini'); assert.match(prompt, /exactly six/i); assert.match(prompt, /two cloze, two meaning, and two grammar/i); assert.match(prompt, /I enjoyed my journey/);
+    assert.deepEqual(result.data.exercises.map(item => item.type).sort(), ['cloze', 'cloze', 'grammar', 'grammar', 'meaning', 'meaning']);
+  } finally { globalThis.fetch = oldFetch; }
+});

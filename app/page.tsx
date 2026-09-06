@@ -1,21 +1,24 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDownUp, ArrowUpFromLine, Check, ChevronDown, ChevronUp, CircleHelp, Copy, Download, History, LoaderCircle, LockKeyhole, Mic, Settings2, ShieldCheck, Square, Volume2, X } from 'lucide-react';
+import { ArrowDownUp, ArrowLeft, ArrowUpFromLine, Check, ChevronDown, ChevronUp, CircleHelp, Copy, Download, History, LoaderCircle, LockKeyhole, Mic, Settings2, ShieldCheck, Square, Volume2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AudioSampleRecorder } from '@/components/audio-sample-recorder';
+import { CoachMode } from '@/components/coach-mode';
 import { INTERFACE_COPY } from '@/lib/interface-copy';
+import { useCoach } from '@/hooks/use-coach';
 import { useTranslator } from '@/hooks/use-translator';
 import { createCustomVoiceDirect, DirectApiError, synthesizeSpeechDirect, TranslationProvider, verifyDirectKey } from '@/lib/direct-api';
-import { LANGUAGES, LanguageCode, Pair, conversationText, language, selectLanguage, transcriptForLanguage } from '@/lib/translation';
+import { LANGUAGES, LanguageCode, Pair, RecordGesture, conversationText, language, selectLanguage, transcriptForLanguage } from '@/lib/translation';
 
 type InstallEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
 type LayoutMode = 'face-to-face' | 'single-operator';
 type SoloDirection = 'listening' | 'speaking';
+type AppMode = 'translator' | 'coach';
 function RecordButton({ controller: t, side, autoSpeakSide, detectSpeaker = true, compact = false, onBeforeRecord }: { controller: ReturnType<typeof useTranslator>; side: 0 | 1; autoSpeakSide?: 0 | 1; detectSpeaker?: boolean; compact?: boolean; onBeforeRecord: () => void }) {
   const [pressed, setPressed] = useState(false);
   const keyHeld = useRef(false), pointerHeld = useRef(false);
@@ -103,9 +106,41 @@ function LanguagePanel({ controller, onHistory, totals, multiplier, side, visual
   </section>;
 }
 
+function SoloDirectionControls({ controller: t, direction, selfSide, otherSide, onDirection, onBeforeRecord }: { controller: ReturnType<typeof useTranslator>; direction: SoloDirection; selfSide: 0 | 1; otherSide: 0 | 1; onDirection: (value: SoloDirection) => void; onBeforeRecord: () => void }) {
+  /* oxlint-disable react/react-compiler -- timestamps are read only inside pointer events */
+  const press = useRef<{ id: number; started: number } | undefined>(undefined);
+  const activate = (value: SoloDirection) => {
+    onDirection(value); onBeforeRecord();
+    const input = value === 'listening' ? otherSide : selfSide, output = value === 'listening' ? selfSide : otherSide;
+    t.toggle(input, output, false);
+  };
+  const pointerDown = (event: React.PointerEvent<HTMLButtonElement>, value: SoloDirection) => {
+    event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
+    if (t.mode !== 'idle') { press.current = undefined; if (direction === value) void t.stop(); return; }
+    press.current = { id: event.pointerId, started: performance.now() }; activate(value);
+  };
+  const pointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const current = press.current; press.current = undefined;
+    if (current?.id === event.pointerId && performance.now() - current.started >= RecordGesture.HOLD_MS) void t.stop();
+  };
+  return <fieldset className="solo-direction" aria-label="翻译方向">
+    {(['listening', 'speaking'] as const).map(value => {
+      const active = direction === value, unavailable = t.phase === 'permission' || t.phase === 'stopping' || (t.mode !== 'idle' && !active);
+      const from = value === 'listening' ? otherSide : selfSide, to = value === 'listening' ? selfSide : otherSide;
+      return <Button key={value} type="button" variant="ghost" data-active={active} data-recording={active && t.mode !== 'idle'} aria-pressed={active && t.mode !== 'idle'} aria-label={`${value === 'listening' ? 'Listening' : 'Speaking'}：${language(t.pair[from])?.label}翻译为${language(t.pair[to])?.label}。点击持续录音，长按松手停止`} disabled={unavailable}
+        onPointerDown={event => pointerDown(event, value)} onPointerUp={pointerUp} onPointerCancel={() => { if (press.current) void t.stop(); press.current = undefined; }} onContextMenu={event => event.preventDefault()}
+        onClick={event => { if (event.detail === 0) { if (t.mode !== 'idle') void t.stop(); else activate(value); } }}>
+        {active && t.mode !== 'idle' ? <Square fill="currentColor" /> : <Mic />}<span>{value === 'listening' ? 'Listening' : 'Speaking'}</span>
+      </Button>;
+    })}
+  </fieldset>;
+}
+
 export default function Home() {
   const t = useTranslator();
+  const coach = useCoach(t.openaiKey, t.addUsage);
   const [access, setAccess] = useState<'checking' | 'locked' | 'unlocked'>('checking');
+  const [appMode, setAppMode] = useState<AppMode | null>(null);
   const [accessPassword, setAccessPassword] = useState(''), [accessError, setAccessError] = useState('');
   const [unlocking, setUnlocking] = useState(false);
   const [dialog, setDialog] = useState<'settings' | 'help' | 'history' | 'text' | 'edit' | 'name' | 'voice' | 'usage' | null>(null);
@@ -126,6 +161,7 @@ export default function Home() {
   const [soloDirection, setSoloDirection] = useState<SoloDirection>('listening');
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const playedSpeech = useRef(0);
+  const playedCoachSpeech = useRef(0);
   const voiceOfferChecked = useRef(false);
   const speechRequest = useRef(0), speechAbort = useRef<AbortController | undefined>(undefined), speechAudio = useRef<HTMLAudioElement | undefined>(undefined), speechUrl = useRef('');
   const { openaiKey, addUsage, setError: reportError, setNotice: reportNotice } = t;
@@ -204,6 +240,11 @@ export default function Home() {
     playedSpeech.current = request.id;
     void playSpeech(request.text, request.lang);
   }, [t.autoSpeech, t.mode, t.phase, layoutMode, playSpeech]);
+  useEffect(() => {
+    const request = coach.speechRequest;
+    if (appMode !== 'coach' || !request || request.id === playedCoachSpeech.current) return;
+    playedCoachSpeech.current = request.id; void playSpeech(request.text, 'en');
+  }, [appMode, coach.speechRequest, playSpeech]);
   useEffect(() => stopSpeech, [stopSpeech]);
   const copyConversation = async () => {
     try { await navigator.clipboard.writeText(conversationText(t.history, ownName)); setCopied(true); clearTimeout(copyTimer.current); copyTimer.current = setTimeout(() => setCopied(false), 1800); }
@@ -270,8 +311,6 @@ export default function Home() {
   ];
   const selfSide = (t.selfOnTop ? 0 : 1) as 0 | 1, otherSide = (1 - selfSide) as 0 | 1;
   const panelOrder: Array<0 | 1> = layoutMode === 'single-operator' ? [otherSide, selfSide] : [0, 1];
-  const soloInputSide = soloDirection === 'listening' ? otherSide : selfSide;
-  const soloOutputSide = soloDirection === 'listening' ? selfSide : otherSide;
   if (access !== 'unlocked') return <main className="access-page"><section className="access-card" aria-busy={access === 'checking'}>
     <div className="access-mark"><ShieldCheck /></div><h1>Lucky 同声翻译</h1>
     {access === 'checking' ? <p><LoaderCircle className="spinning" />正在检查访问权限…</p> : <form onSubmit={unlock}>
@@ -281,6 +320,8 @@ export default function Home() {
       <Button type="submit" className="form-submit" disabled={!accessPassword || unlocking}>{unlocking ? <><LoaderCircle className="spinning" />正在验证</> : '进入网站'}</Button>
     </form>}
   </section></main>;
+  if (appMode === null) return <main className="mode-page"><section className="mode-card"><div className="access-mark"><Mic /></div><p className="mode-brand">LUCKY</p><h1>What would you like to do?</h1><div className="mode-options"><Button onClick={() => { setAppMode('coach'); if (coach.history.length === 0 && !coach.busy) void coach.beginSession(); }}><strong>English Coach</strong><span>Have a natural conversation and practise afterwards</span></Button><Button variant="outline" onClick={() => setAppMode('translator')}><strong>Translator</strong><span>Translate a live conversation in both directions</span></Button></div><Button variant="ghost" className="mode-settings" onClick={() => { setAppMode('translator'); queueMicrotask(() => open('settings')); }}><Settings2 />设置服务密钥</Button></section></main>;
+  if (appMode === 'coach') return <CoachMode coach={coach} onBack={() => { stopSpeech(); void coach.stopRecording(); setAppMode(null); }} onSettings={() => { stopSpeech(); void coach.stopRecording(); setAppMode('translator'); queueMicrotask(() => open('settings')); }} onSpeak={text => void playSpeech(text, 'en')} />;
   return <main className="translator"><div className={`app-frame ${layoutMode === 'single-operator' ? 'single-operator' : ''}`}>
     {panelOrder.map((side, index) => <LanguagePanel key={side} controller={t} onHistory={() => open('history')} totals={t.usageTotals} multiplier={t.multiplier} side={side} visualRow={layoutMode === 'single-operator' ? index + 1 : side === 0 ? 1 : 3} isSelf={side === selfSide} facingAway={layoutMode === 'face-to-face' && side === 0} showRecord={layoutMode === 'face-to-face'} ownName={ownName} pair={t.pair} entries={panelEntries[side]} locked={locked} canSpeak={Boolean(t.openaiKey)} onLanguage={t.changePair} onEdit={(id, text) => editSentence(side, id, text)} onSpeak={text => void playSpeech(text, t.pair[side])} onBeforeRecord={stopSpeech} onUsage={() => open('usage', side)} />)}
     <section className={`control-deck ${layoutMode === 'single-operator' ? 'single-control-deck' : ''}`} aria-label="录音控制">
@@ -288,17 +329,11 @@ export default function Home() {
         <Button variant="ghost" onClick={() => open('history')} aria-label="对话记录" title="对话记录"><History /></Button>
         <Button variant="ghost" onClick={() => open('settings')} aria-label="翻译设置" title="设置"><Settings2 /></Button>
       </div></div>
-      {layoutMode === 'single-operator' && <div className="solo-controls">
-        <RecordButton controller={t} side={soloInputSide} autoSpeakSide={soloOutputSide} detectSpeaker={false} compact onBeforeRecord={stopSpeech} />
-        <fieldset className="solo-direction" aria-label="翻译方向">
-          <Button type="button" variant="ghost" data-active={soloDirection === 'listening'} aria-pressed={soloDirection === 'listening'} aria-label={`Listening：${language(t.pair[otherSide])?.label}翻译为${language(t.pair[selfSide])?.label}`} disabled={locked} onClick={() => { setSoloDirection('listening'); try { localStorage.setItem('lucky-solo-direction', 'listening'); } catch {} }}>Listening</Button>
-          <Button type="button" variant="ghost" data-active={soloDirection === 'speaking'} aria-pressed={soloDirection === 'speaking'} aria-label={`Speaking：${language(t.pair[selfSide])?.label}翻译为${language(t.pair[otherSide])?.label}`} disabled={locked} onClick={() => { setSoloDirection('speaking'); try { localStorage.setItem('lucky-solo-direction', 'speaking'); } catch {} }}>Speaking</Button>
-        </fieldset>
-      </div>}
+      {layoutMode === 'single-operator' && <SoloDirectionControls controller={t} direction={soloDirection} selfSide={selfSide} otherSide={otherSide} onDirection={value => { setSoloDirection(value); try { localStorage.setItem('lucky-solo-direction', value); } catch {} }} onBeforeRecord={stopSpeech} />}
       {status && <output className={`status-line ${t.error ? 'has-error' : ''}`} aria-live="polite">{t.pending > 0 && !t.error && <LoaderCircle className="spinning" />}<span>{status}</span></output>}
       {t.failed && <Button variant="outline" className="retry-button" disabled={locked} onClick={t.retry}>重试上一句</Button>}
     </section>
-    <footer className="app-footer"><span className="connection-label"><i data-ready={t.canTranslate} />{t.canTranslate ? `${t.translationProvider === 'deepseek' ? 'DeepSeek' : 'OpenAI'} 已连接` : '尚未连接翻译服务'}</span><div>
+    <footer className="app-footer"><Button variant="ghost" className="mode-return" onClick={() => { void t.stop(); stopSpeech(); setAppMode(null); }}><ArrowLeft />模式</Button><span className="connection-label"><i data-ready={t.canTranslate} />{t.canTranslate ? `${t.translationProvider === 'deepseek' ? 'DeepSeek' : 'OpenAI'} 已连接` : '尚未连接翻译服务'}</span><div>
       {!installed && <Button variant="ghost" onClick={() => void install()} className="install-action"><Download />添加到桌面</Button>}
       <Button variant="ghost" aria-label="使用帮助" onClick={() => open('help')}><CircleHelp /></Button>
     </div></footer>

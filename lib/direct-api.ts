@@ -82,6 +82,8 @@ async function transcribe(audio: Blob, key: string, signal: AbortSignal) {
   throw new DirectApiError('语音识别暂时不可用');
 }
 
+export const transcribeDirect = transcribe;
+
 export async function translateDirect(input: { audio?: Blob; text?: string; pair: Pair; context: string[]; provider: TranslationProvider; openaiKey: string; deepseekKey: string; signal: AbortSignal; onTranscribed?: (text: string) => void | Promise<void> }) {
   let source = input.text?.trim() || '', usage: DirectUsage = { tokens: 0, cost: 0 };
   if (input.audio) {
