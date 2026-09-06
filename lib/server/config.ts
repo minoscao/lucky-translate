@@ -1,4 +1,5 @@
 import { getDb } from '@/db';
+import { DEFAULT_COACH_SKILL } from '@/lib/coach';
 
 const encoder = new TextEncoder(), decoder = new TextDecoder();
 const password = () => process.env.ADMIN_PASSWORD || 'Minocolin1';
@@ -29,4 +30,16 @@ export async function getDeepSeekKey() {
 
 export async function deepSeekConfigured() {
   return Boolean(await getDb().prepare("SELECT 1 ok FROM app_config WHERE key = 'deepseek_api_key'").first());
+}
+
+export async function getCoachSkill() {
+  const row = await getDb().prepare("SELECT value FROM app_config WHERE key = 'coach_skill'").first<{ value: string }>();
+  return row?.value?.trim() || DEFAULT_COACH_SKILL;
+}
+
+export async function setCoachSkill(value: string) {
+  const clean = value.trim();
+  if (clean.length < 200 || clean.length > 20_000) throw new Error('Coach skill 需要在 200 到 20,000 个字符之间');
+  await getDb().prepare(`INSERT INTO app_config (key, value, updated_at) VALUES ('coach_skill', ?1, ?2)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).bind(clean, Date.now()).run();
 }

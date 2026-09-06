@@ -104,9 +104,9 @@ test('managed service architecture keeps API keys on the server and uses the con
   assert.match(speech, /@cf\/myshell-ai\/melotts/);
 });
 
-test('translation time is charged at ten percent while coaching time is charged in full', async () => {
+test('translation and coaching time are charged in full while summaries are charged at ten percent', async () => {
   const account = await readFile(new URL('../lib/server/account.ts', import.meta.url), 'utf8');
-  assert.match(account, /category === 'translation' \? Math\.ceil\(safe \* \.1\) : safe/);
+  assert.match(account, /category === 'summary' \? Math\.ceil\(safe \* \.1\) : safe/);
   assert.match(account, /category === 'training' \? safe : 0/);
 });
 test('coach recalls do not turn possible speech-recognition noise into corrections', async () => {

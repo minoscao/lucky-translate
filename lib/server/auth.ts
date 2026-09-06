@@ -2,7 +2,9 @@ import { getDb } from '@/db';
 
 const SESSION_COOKIE = 'lucky-session';
 const ADMIN_COOKIE = 'lucky-admin';
+const SUPER_ADMIN_COOKIE = 'lucky-super-admin';
 const ADMIN_PASSWORD = () => process.env.ADMIN_PASSWORD || 'Minocolin1';
+const SUPER_ADMIN_PASSWORD = () => process.env.SUPER_ADMIN_PASSWORD || 'Canoncanon1#';
 const encoder = new TextEncoder();
 
 export type Account = {
@@ -54,6 +56,11 @@ function sessionCookie(request: Request, token: string, maxAge = 30 * 86400) {
 function adminCookie(request: Request, token: string, maxAge = 8 * 3600) {
   const secure = new URL(request.url).protocol === 'https:' ? ' Secure;' : '';
   return `${ADMIN_COOKIE}=${token}; Path=/; HttpOnly;${secure} SameSite=Strict; Max-Age=${maxAge}`;
+}
+
+function superAdminCookie(request: Request, token: string, maxAge = 30 * 60) {
+  const secure = new URL(request.url).protocol === 'https:' ? ' Secure;' : '';
+  return `${SUPER_ADMIN_COOKIE}=${token}; Path=/admin; HttpOnly;${secure} SameSite=Strict; Max-Age=${maxAge}`;
 }
 
 export const PLAN_DEFAULTS = {
@@ -128,3 +135,9 @@ export async function checkAdminPassword(request: Request, password: string) {
   return adminCookie(request, await adminToken());
 }
 export function clearAdminCookie(request: Request) { return adminCookie(request, '', 0); }
+export async function superAdminToken() { return sha256(`lucky-super-admin\n${SUPER_ADMIN_PASSWORD()}`); }
+export async function isSuperAdmin(request: Request) { const expected = await superAdminToken(); return safeEqual(cookie(request, SUPER_ADMIN_COOKIE), expected); }
+export async function checkSuperAdminPassword(request: Request, password: string) {
+  if (!safeEqual(password, SUPER_ADMIN_PASSWORD())) return null;
+  return superAdminCookie(request, await superAdminToken());
+}

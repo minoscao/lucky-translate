@@ -1,4 +1,5 @@
 import { requireAccount } from '@/lib/server/auth';
+import { getCoachSkill } from '@/lib/server/config';
 import { deepSeekJson, DeepSeekMessage } from '@/lib/server/deepseek';
 import { json, readJson, sameOrigin } from '@/lib/server/http';
 
@@ -12,6 +13,9 @@ export async function POST(request: Request) {
       const row = item as { role?: unknown; content?: unknown };
       if (!['system', 'user', 'assistant'].includes(String(row.role)) || typeof row.content !== 'string' || row.content.length > 20_000) return json({ error: '对话内容无效' }, 400);
       messages.push({ role: row.role as DeepSeekMessage['role'], content: row.content });
+    }
+    if (messages[0]?.role === 'system' && messages[0].content.includes('affectionate and adaptive English conversation coach')) {
+      messages[0] = { role: 'system', content: await getCoachSkill() };
     }
     const result = await deepSeekJson(account, '英语训练', messages, request.signal, Math.max(200, Math.min(3000, Number(body.maxTokens) || 1800)));
     return json({ content: result.content, usage: result.usage });

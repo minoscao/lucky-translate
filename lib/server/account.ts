@@ -34,10 +34,10 @@ export async function enforceLimits(account: Account) {
   return snapshot;
 }
 
-export async function addActiveSeconds(account: Account, seconds: number, category: 'training' | 'translation') {
-  const safe = Math.max(0, Math.min(60, Math.round(seconds))); if (!safe) return accountSnapshot(account);
+export async function addActiveSeconds(account: Account, seconds: number, category: 'training' | 'translation' | 'summary') {
+  const safe = Math.max(0, Math.min(category === 'summary' ? 86_400 : 60, Math.round(seconds))); if (!safe) return accountSnapshot(account);
   await enforceLimits(account); const { day } = periodKeys(), now = Date.now();
-  const charged = category === 'translation' ? Math.ceil(safe * .1) : safe;
+  const charged = category === 'summary' ? Math.ceil(safe * .1) : safe;
   const training = category === 'training' ? safe : 0, translation = category === 'translation' ? safe : 0;
   await getDb().prepare(`INSERT INTO usage_daily (user_id, day, tokens, cost_micros, active_seconds, training_seconds, translation_seconds, updated_at) VALUES (?1, ?2, 0, 0, ?3, ?4, ?5, ?6)
     ON CONFLICT(user_id, day) DO UPDATE SET active_seconds = active_seconds + excluded.active_seconds, training_seconds = training_seconds + excluded.training_seconds, translation_seconds = translation_seconds + excluded.translation_seconds, updated_at = excluded.updated_at`).bind(account.id, day, charged, training, translation, now).run();

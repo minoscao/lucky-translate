@@ -11,7 +11,7 @@ import { VoiceRecorder } from '@/lib/voice-recorder';
 import { saveCloudRecord } from '@/lib/account';
 
 type UsageHandler = (tokens: number, cost: number) => void;
-type CoachJournal = { todayDate: string; todaySeconds: number; daily: CoachDailySummary[]; weekly: CoachWeeklySummary[]; assessment?: CoachLevelAssessment };
+type CoachJournal = { todayDate: string; todaySeconds: number; daily: CoachDailySummary[]; weekly: CoachWeeklySummary[]; assessment?: CoachLevelAssessment; summaryDate?: string; summarySeconds?: number };
 const JOURNAL_KEY = 'lucky-coach-journal';
 const dateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const weekStart = (value: string) => {
@@ -40,17 +40,18 @@ const readJournal = (): CoachJournal => {
   } catch { return emptyJournal(); }
 };
 
-export function useCoach(_serviceKey: string, addUsage: UsageHandler, active = false, ieltsScore?: number) {
+export function useCoach(_serviceKey: string, addUsage: UsageHandler, active = false, ieltsScore?: number, onSummaryUsage?: (seconds: number) => Promise<void>) {
   const [history, setHistory] = useState<CoachMessage[]>([]), [memory, setMemory] = useState<CoachMemory>(EMPTY_COACH_MEMORY);
   const [busy, setBusy] = useState(false), [recording, setRecording] = useState(false), [error, setError] = useState(''), [tip, setTip] = useState('');
   const [practice, setPractice] = useState<{ title: string; exercises: CoachExercise[] }>(), [speechRequest, setSpeechRequest] = useState<{ id: number; text: string }>();
   const [journal, setJournal] = useState<CoachJournal>(emptyJournal);
-  const recorder = useRef<VoiceRecorder | undefined>(undefined), abort = useRef<AbortController | undefined>(undefined), keyRef = useRef('managed'), usageRef = useRef(addUsage), ieltsScoreRef = useRef(ieltsScore);
+  const recorder = useRef<VoiceRecorder | undefined>(undefined), abort = useRef<AbortController | undefined>(undefined), keyRef = useRef('managed'), usageRef = useRef(addUsage), ieltsScoreRef = useRef(ieltsScore), summaryUsageRef = useRef(onSummaryUsage);
   const historyRef = useRef<CoachMessage[]>([]), memoryRef = useRef<CoachMemory>(EMPTY_COACH_MEMORY), busyRef = useRef(false), recordingRef = useRef(false), journalRef = useRef<CoachJournal>(emptyJournal());
   const cloudReady = useRef(false);
   const messageId = useRef(0), speechId = useRef(0);
   usageRef.current = addUsage;
   ieltsScoreRef.current = ieltsScore;
+  summaryUsageRef.current = onSummaryUsage;
   const setBusyState = (value: boolean) => { busyRef.current = value; setBusy(value); };
   const setRecordingState = (value: boolean) => { recordingRef.current = value; setRecording(value); };
   const saveSession = (messages: CoachMessage[], nextMemory: CoachMemory) => { const data = { history: messages.slice(-80), memory: nextMemory }; try { localStorage.setItem('lucky-coach-state', JSON.stringify(data)); } catch {} if (cloudReady.current) void saveCloudRecord('coach-state', 'coach-state', data).catch(() => {}); };
@@ -171,7 +172,9 @@ export function useCoach(_serviceKey: string, addUsage: UsageHandler, active = f
         const archive: CoachWeeklySummary = { id: `week-${start}`, startDate: start, endDate: weekEnd(start), minutes: days.reduce((sum, item) => sum + item.minutes, 0), ...weekly.data };
         next = { ...next, daily: next.daily.filter(item => weekStart(item.date) !== start), weekly: [...next.weekly.filter(item => item.startDate !== start), archive].sort((a, b) => b.startDate.localeCompare(a.startDate)).slice(0, 52) };
       }
-      saveJournal(next); return report;
+      const alreadySummarized = current.summaryDate === today ? current.summarySeconds || 0 : 0, summarySeconds = Math.max(0, current.todaySeconds - alreadySummarized);
+      if (summarySeconds) await summaryUsageRef.current?.(summarySeconds);
+      saveJournal({ ...next, summaryDate: today, summarySeconds: current.todaySeconds }); return report;
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '无法生成今日总结'); return undefined; }
     finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
   }, [saveJournal]);

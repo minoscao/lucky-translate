@@ -79,3 +79,14 @@ export const priceHistory = sqliteTable('price_history', {
   effectiveAt: integer('effective_at').notNull(),
   retiredAt: integer('retired_at'),
 }, table => [index('idx_price_history_model_effective').on(table.model, table.effectiveAt)]);
+
+export const payments = sqliteTable('payments', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  amountCents: integer('amount_cents').notNull(),
+  currency: text('currency').notNull().default('USD'),
+  status: text('status').notNull().default('paid'),
+  note: text('note').notNull().default(''),
+  paidAt: integer('paid_at').notNull(),
+  createdAt: integer('created_at').notNull(),
+}, table => [index('idx_payments_paid_at').on(table.paidAt), index('idx_payments_user_paid_at').on(table.userId, table.paidAt)]);

@@ -187,13 +187,18 @@ export default function Home() {
   const [speechSpeed, setSpeechSpeed] = useState(1);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('face-to-face');
   const [soloDirection, setSoloDirection] = useState<SoloDirection>('listening');
-  const coach = useCoach('managed', t.addUsage, appMode === 'coach', ieltsScore);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const playedSpeech = useRef(0);
   const playedCoachSpeech = useRef(0);
   const speechRequest = useRef(0), speechAbort = useRef<AbortController | undefined>(undefined), speechAudio = useRef<HTMLAudioElement | undefined>(undefined), speechUrl = useRef('');
   const { addUsage, mode: translatorMode, setError: reportError, stop: stopTranslator } = t;
   const activeAccountId = account?.status === 'active' ? account.id : '';
+  const chargeSummary = useCallback(async (seconds: number) => {
+    if (!activeAccountId || seconds <= 0) return;
+    const data = await accountRequest<{ account: AccountSnapshot }>('/api/account', { method: 'POST', body: JSON.stringify({ seconds, category: 'summary' }) });
+    setAccount(data.account);
+  }, [activeAccountId]);
+  const coach = useCoach('managed', t.addUsage, appMode === 'coach', ieltsScore, chargeSummary);
   const locked = t.mode !== 'idle' || t.phase !== 'ready' || t.pending > 0;
   const panelEntries = useMemo(() => {
     const panels = [transcriptForLanguage(t.history, t.pair[0]), transcriptForLanguage(t.history, t.pair[1])] as Array<Array<{ id: number; text: string; speaker: 'self' | 'other'; pending?: boolean; provisional?: boolean }>>;
@@ -404,7 +409,7 @@ export default function Home() {
         <Select value={layoutMode} onValueChange={value => { if (!value) return; const layout = value as LayoutMode; setLayoutMode(layout); try { localStorage.setItem('lucky-layout', layout); } catch {} }}><SelectTrigger id="layout-mode" className="app-input"><SelectValue>{layoutMode === 'face-to-face' ? '面对面 · 双方操作' : '单人 · Listening / Speaking'}</SelectValue></SelectTrigger><SelectContent><SelectItem value="face-to-face">面对面 · 双方操作</SelectItem><SelectItem value="single-operator">单人 · Listening / Speaking</SelectItem></SelectContent></Select>
         <label className="field-label" htmlFor="speech-speed">朗读语速</label>
         <Select value={String(speechSpeed)} onValueChange={value => { if (!value) return; const speed = Number(value); setSpeechSpeed(speed); try { localStorage.setItem('lucky-speech-speed', value); } catch {} }}><SelectTrigger id="speech-speed" className="app-input"><SelectValue>{speechSpeed}×</SelectValue></SelectTrigger><SelectContent>{[.75, 1, 1.5, 2].map(speed => <SelectItem key={speed} value={String(speed)}>{speed}×</SelectItem>)}</SelectContent></Select>
-        <details className="inline-help"><summary>会员计时规则<ChevronDown /></summary><p>English Coach 按实际时间计费。Translator 按实际对话时间的 10% 计费：翻译 1 小时扣 6 分钟。导出不扣时间。</p></details>
+        <details className="inline-help"><summary>会员计时规则<ChevronDown /></summary><p>翻译和 English Coach 都按实际使用时间的 100% 计入额度。生成对话总结时，只按尚未总结的对话时长的 10% 计入；例如 1 小时对话的总结计 6 分钟。导出不额外扣时间。</p></details>
         <div className="account-storage"><span>个人云空间</span><strong>{(account.storage.bytes / 1024 / 1024).toFixed(1)} / {(account.storage.limitBytes / 1024 / 1024).toFixed(0)} MB</strong></div>
         <Button type="button" variant="ghost" className="clear-key" onClick={() => void logout()}><LogOut />退出账户</Button>
       </div>}
@@ -412,7 +417,7 @@ export default function Home() {
         <label className="field-label" htmlFor="typed-text">想说的话</label><Textarea id="typed-text" className="app-input text-input" value={draftText} maxLength={2000} onChange={event => setDraftText(event.target.value)} placeholder="在这里输入…" />
         {formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={t.pending > 0}>翻译</Button>
       </form>}
-      {visibleDialog === 'usage' && <div className="usage-details">{usageRows.map(item => <article key={item.label}><span>{item.label}</span><strong>${(item.cost * account.costMultiplier).toFixed(2)}</strong><small>{item.tokens.toLocaleString()} tokens · 计费时间 {duration(item.seconds)} · 实际 ${item.cost.toFixed(4)}</small></article>)}<p>显示倍率 <strong>×{account.costMultiplier.toFixed(1)}</strong>。翻译按实际时间的 10% 计入会员额度；训练按 100% 计入。</p></div>}
+      {visibleDialog === 'usage' && <div className="usage-details">{usageRows.map(item => <article key={item.label}><span>{item.label}</span><strong>${(item.cost * account.costMultiplier).toFixed(2)}</strong><small>{item.tokens.toLocaleString()} tokens · 计费时间 {duration(item.seconds)} · 实际 ${item.cost.toFixed(4)}</small></article>)}<p>显示倍率 <strong>×{account.costMultiplier.toFixed(1)}</strong>。翻译和训练按 100% 计入；对话总结按对应对话时长的 10% 计入。</p></div>}
       {visibleDialog === 'edit' && <form className="edit-form" onSubmit={event => { event.preventDefault(); if (!draftText.trim() || editingId === undefined) { setFormError('这句话不能为空'); return; } if (t.retranslate(editingId, draftText.trim())) { setDialog(null); setEditingId(undefined); } }}>
         <label className="field-label" htmlFor="edited-text">当前这句话</label><Textarea id="edited-text" className="app-input edit-input" value={draftText} maxLength={2000} onChange={event => setDraftText(event.target.value)} dir="auto" lang={t.pair[dialogSide]} />
         {formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={t.pending > 0}>保存并重新翻译</Button>
