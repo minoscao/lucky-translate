@@ -1,0 +1,9 @@
+{
+  "id": "/", "name": "Lucky 同声翻译", "short_name": "Lucky 翻译",
+  "description": "面对面双向语音翻译", "lang": "zh-CN", "start_url": "/", "scope": "/",
+  "display": "standalone", "background_color": "#0b111a", "theme_color": "#0b111a",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
