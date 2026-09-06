@@ -12,6 +12,19 @@ import { useTranslator } from '@/hooks/use-translator';
 import { LANGUAGES, LanguageCode, Pair, conversationText, language, selectLanguage, transcriptForLanguage } from '@/lib/translation';
 
 type InstallEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
+function speakWithDevice(text: string, lang: string, onSpeaking: (value: boolean) => void, onError: (message: string) => void) {
+  if (!('speechSynthesis' in window)) { onError('这台设备不支持自动朗读'); return; }
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = lang;
+  const voices = window.speechSynthesis.getVoices();
+  const match = voices.find(voice => voice.lang.toLowerCase().replace('_', '-') === lang.toLowerCase()) || voices.find(voice => voice.lang.split('-')[0] === lang.split('-')[0]);
+  if (voices.length && !match) { onError('设备尚未安装这种语言的声音，请在系统语音设置中下载'); return; }
+  if (match) utterance.voice = match;
+  utterance.onstart = () => onSpeaking(true); utterance.onend = () => onSpeaking(false);
+  utterance.onerror = event => { onSpeaking(false); if (event.error !== 'interrupted' && event.error !== 'canceled') onError('朗读失败，请检查设备的语音设置'); };
+  window.speechSynthesis.speak(utterance);
+}
 function RecordButton({ controller: t, side }: { controller: ReturnType<typeof useTranslator>; side: 0 | 1 }) {
   const [pressed, setPressed] = useState(false);
   const keyHeld = useRef(false), pointerHeld = useRef(false);
@@ -23,13 +36,13 @@ function RecordButton({ controller: t, side }: { controller: ReturnType<typeof u
   return <div className="record-area">
         <Button className="record-button" data-mode={t.mode} data-pressed={pressed} aria-pressed={isRecording} aria-label={primary} disabled={t.phase === 'stopping'}
           onContextMenu={event => event.preventDefault()}
-          onPointerDown={event => { if (t.pointerDown(event)) { pointerHeld.current = true; setPressed(true); } }}
-          onPointerUp={event => { pointerHeld.current = false; setPressed(false); t.pointerUp(event); }}
+          onPointerDown={event => { if (t.pointerDown(event, side)) { pointerHeld.current = true; setPressed(true); } }}
+          onPointerUp={event => { pointerHeld.current = false; setPressed(false); t.pointerUp(event, side); }}
           onPointerCancel={() => { if (pointerHeld.current) stopTouch(); }}
           onLostPointerCapture={() => { if (pointerHeld.current) stopTouch(); }}
           onPointerMove={event => { if (!pressed) return; const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left - 28 || event.clientX > rect.right + 28 || event.clientY < rect.top - 28 || event.clientY > rect.bottom + 28) stopTouch(); }}
-          onClick={event => { if (event.detail === 0) t.toggle(); }}
-          onKeyDown={event => { if (event.key === ' ') { event.preventDefault(); if (!event.repeat && !keyHeld.current) { keyHeld.current = true; setPressed(true); t.toggle(); } } else if (event.key === 'Enter') { event.preventDefault(); if (!event.repeat) t.toggle(); } else if (event.key === 'Escape') stopTouch(); }}
+          onClick={event => { if (event.detail === 0) t.toggle(side); }}
+          onKeyDown={event => { if (event.key === ' ') { event.preventDefault(); if (!event.repeat && !keyHeld.current) { keyHeld.current = true; setPressed(true); t.toggle(side); } } else if (event.key === 'Enter') { event.preventDefault(); if (!event.repeat) t.toggle(side); } else if (event.key === 'Escape') stopTouch(); }}
           onKeyUp={event => { if (event.key === ' ') { event.preventDefault(); keyHeld.current = false; stopTouch(); } }}
           onBlur={() => { if (keyHeld.current) { keyHeld.current = false; stopTouch(); } }}>
           {t.phase === 'permission' ? <LoaderCircle className="spinning" /> : t.mode === 'continuous' ? <Square fill="currentColor" /> : <Mic />}
@@ -43,7 +56,7 @@ function RecordButton({ controller: t, side }: { controller: ReturnType<typeof u
 type PanelProps = {
   controller: ReturnType<typeof useTranslator>; onHistory: () => void;
   usage: { tokens: number; cost: number }; multiplier: number;
-  side: 0 | 1; isSelf: boolean; ownName: string; pair: Pair; entries: { id: number; text: string }[]; locked: boolean; canSpeak: boolean;
+  side: 0 | 1; isSelf: boolean; ownName: string; pair: Pair; entries: { id: number; text: string; speaker: 'self' | 'other' }[]; locked: boolean; canSpeak: boolean;
   onLanguage: (pair: Pair) => void; onType: () => void; onEdit: (id: number, text: string) => void; onSpeak: () => void; onCopy: () => void;
 };
 function LanguagePanel({ controller, onHistory, usage, multiplier, side, isSelf, ownName, pair, entries, locked, canSpeak, onLanguage, onType, onEdit, onSpeak, onCopy }: PanelProps) {
@@ -87,7 +100,7 @@ function LanguagePanel({ controller, onHistory, usage, multiplier, side, isSelf,
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Keyboard users must be able to focus and scroll this reading region. */}
       <section ref={viewport} className="transcript-viewport" tabIndex={0} aria-label="对话内容，可上下滚动">
         <div className="transcript-stack" lang={pair[side]}>
-          {entries.length ? entries.map((item, index) => <button type="button" key={item.id} className={`transcript-line ${index === entries.length - 1 ? 'current' : 'previous'}`} dir="auto" onClick={() => onEdit(item.id, item.text)} disabled={locked} aria-label="修改并重新翻译这句话">{item.text}</button>) : <p className="transcript-line current empty">{INTERFACE_COPY[pair[side]].ready}</p>}
+          {entries.length ? entries.map((item, index) => <button type="button" key={item.id} className={`transcript-line ${index === entries.length - 1 ? 'current' : 'previous'}`} dir="auto" onClick={() => onEdit(item.id, item.text)} disabled={locked} aria-label={`${item.speaker === 'self' ? ownName : 'other speaks'}：修改并重新翻译这句话`}><span className={`turn-speaker ${item.speaker}`}>{item.speaker === 'self' ? ownName : 'other speaks'}</span><span>{item.text}</span></button>) : <p className="transcript-line current empty">{INTERFACE_COPY[pair[side]].ready}</p>}
         </div>
       </section>
       <nav className="transcript-nav" aria-label="翻阅对话"><Button variant="ghost" disabled={bounds.top} onClick={() => scroll(-1)} aria-label="向上查看较早对话" title="上一页"><ChevronUp /></Button><Button variant="ghost" disabled={bounds.bottom} onClick={() => scroll(1)} aria-label="向下查看后续对话" title="下一页"><ChevronDown /></Button></nav>
@@ -117,6 +130,8 @@ export default function Home() {
   const [ownName, setOwnName] = useState('Me'), [draftName, setDraftName] = useState('');
   const [editingId, setEditingId] = useState<number>();
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const playedSpeech = useRef(0);
+  const reportError = t.setError;
   const locked = t.mode !== 'idle' || t.phase !== 'ready' || t.pending > 0;
   const panelEntries = useMemo(() => [transcriptForLanguage(t.history, t.pair[0]), transcriptForLanguage(t.history, t.pair[1])], [t.history, t.pair]);
   const visibleDialog = t.needsSettings ? 'settings' : dialog;
@@ -139,18 +154,14 @@ export default function Home() {
   const saveName = (value: string) => { const name = value.trim().slice(0, 24) || 'Me'; setOwnName(name); try { localStorage.setItem('lucky-profile', JSON.stringify({ name })); } catch {} setDialog(null); };
   const editSentence = (side: 0 | 1, id: number, text: string) => { setEditingId(id); setDraftText(text); open('edit', side); };
   const speak = (side: 0 | 1) => {
-    const text = panelEntries[side].at(-1)?.text; if (!text) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = t.pair[side];
-    const voices = window.speechSynthesis.getVoices();
-    const match = voices.find(voice => voice.lang.toLowerCase().replace('_', '-') === t.pair[side].toLowerCase()) || voices.find(voice => voice.lang.split('-')[0] === t.pair[side].split('-')[0]);
-    if (voices.length && !match) { t.setError('设备尚未安装这种语言的声音，请在系统语音设置中下载'); return; }
-    if (match) utterance.voice = match;
-    utterance.onstart = () => setSpeaking(true); utterance.onend = () => setSpeaking(false);
-    utterance.onerror = event => { setSpeaking(false); if (event.error !== 'interrupted' && event.error !== 'canceled') t.setError('朗读失败，请检查设备的语音设置'); };
-    window.speechSynthesis.speak(utterance);
+    const text = panelEntries[side].at(-1)?.text; if (text) speakWithDevice(text, t.pair[side], setSpeaking, reportError);
   };
+  useEffect(() => {
+    const request = t.autoSpeech;
+    if (!request || request.id === playedSpeech.current || t.mode !== 'idle' || t.phase !== 'ready') return;
+    playedSpeech.current = request.id;
+    speakWithDevice(request.text, request.lang, setSpeaking, reportError);
+  }, [t.autoSpeech, t.mode, t.phase, reportError]);
   const copy = async (side: 0 | 1) => {
     const text = panelEntries[side].at(-1)?.text; if (!text) return;
     try { await navigator.clipboard.writeText(text); setCopied(true); clearTimeout(copyTimer.current); copyTimer.current = setTimeout(() => setCopied(false), 1800); }
@@ -230,7 +241,7 @@ export default function Home() {
         {formError && <p role="alert" className="form-error">{formError}</p>}
         <div className="credential-actions"><Button type="submit" className="form-submit">保存到本设备并开始</Button>{t.credential && <Button type="button" variant="ghost" className="clear-key" onClick={() => { t.clearCredential(); setDraftKey(''); }}>清除已保存密钥</Button>}<Button type="button" variant="ghost" className="clear-key" onClick={() => { void fetch('/api/unlock', { method: 'DELETE', credentials: 'same-origin' }); setDialog(null); setAccess('locked'); }}>锁定网站</Button></div>
       </form>}
-      {visibleDialog === 'text' && <form onSubmit={event => { event.preventDefault(); if (!draftText.trim()) { setFormError('请输入想说的话'); return; } if (t.submitText(draftText.trim())) setDialog(null); }}>
+      {visibleDialog === 'text' && <form onSubmit={event => { event.preventDefault(); if (!draftText.trim()) { setFormError('请输入想说的话'); return; } if (t.submitText(draftText.trim(), dialogSide)) setDialog(null); }}>
         <label className="field-label" htmlFor="typed-text">想说的话</label><Textarea id="typed-text" className="app-input text-input" value={draftText} maxLength={2000} onChange={event => setDraftText(event.target.value)} placeholder="在这里输入…" />
         {formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={t.pending > 0}>翻译</Button>
       </form>}
@@ -238,12 +249,12 @@ export default function Home() {
         <label className="field-label" htmlFor="edited-text">当前这句话</label><Textarea id="edited-text" className="app-input edit-input" value={draftText} maxLength={2000} onChange={event => setDraftText(event.target.value)} dir="auto" lang={t.pair[dialogSide]} />
         {formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={t.pending > 0}>保存并重新翻译</Button>
       </form>}
-      {visibleDialog === 'history' && <>{formError && <p role="alert" className="form-error">{formError}</p>}<div className="history-list">{t.history.length ? t.history.map((item, index) => <article className="history-item" key={item.id}><span>{String(index + 1).padStart(2, '0')} · {language(item.pair[0])?.label} / {language(item.pair[1])?.label}</span><p lang={item.pair[0]} dir="auto">{item.upper}</p><p lang={item.pair[1]} dir="auto">{item.lower}</p><details><summary>原文</summary><p dir="auto">{item.original}</p></details></article>) : <p className="history-empty">说出第一句话，对话就从这里开始。</p>}</div>{t.history.length > 0 && <div className="conversation-actions"><Button variant="secondary" onClick={() => void copyConversation()} disabled={locked}><Copy />{copied ? '已复制' : '复制全部'}</Button><Button variant="secondary" onClick={exportConversation} disabled={locked}><Download />导出 TXT</Button><Button variant="ghost" onClick={() => { t.clear(); setDialog(null); }}>清空对话</Button></div>}</>}
+      {visibleDialog === 'history' && <>{formError && <p role="alert" className="form-error">{formError}</p>}<div className="history-list">{t.history.length ? t.history.map((item, index) => <article className="history-item" key={item.id}><span className={`history-speaker ${item.speaker}`}>{String(index + 1).padStart(2, '0')} · {item.speaker === 'self' ? ownName : 'other speaks'}</span><p lang={item.pair[0]} dir="auto"><small>{language(item.pair[0])?.label}</small>{item.upper}</p><p lang={item.pair[1]} dir="auto"><small>{language(item.pair[1])?.label}</small>{item.lower}</p><details><summary>原文</summary><p dir="auto">{item.original}</p></details></article>) : <p className="history-empty">说出第一句话，对话就从这里开始。</p>}</div>{t.history.length > 0 && <div className="conversation-actions"><Button variant="secondary" onClick={() => void copyConversation()} disabled={locked}><Copy />{copied ? '已复制' : '复制全部'}</Button><Button variant="secondary" onClick={exportConversation} disabled={locked}><Download />导出 TXT</Button><Button variant="ghost" onClick={() => { t.clear(); setDialog(null); }}>清空对话</Button></div>}</>}
       {visibleDialog === 'help' && <div className="help-content">
         <div className="help-row"><ArrowUpFromLine /><div><strong>iPhone / iPad</strong><p>在 Safari 中打开，点“分享”，选择“添加到主屏幕”。</p></div></div>
         <div className="help-row"><Download /><div><strong>安卓手机 / 电脑</strong><p>在 Chrome 中打开，点浏览器菜单，选择“安装应用”或“添加到主屏幕”。</p></div></div>
         {installEvent && <Button className="form-submit" onClick={() => void install()}>添加 Lucky 到桌面</Button>}
-        <details className="inline-help"><summary>录音怎么用<ChevronDown /></summary><p>长按按钮，按住说话、松手停止；快速双击开启持续录音，再点一次停止。双方都能说话，停顿后逐句显示翻译。上半屏倒转，面对面就能阅读。</p><p>翻译需要联网。切到后台或锁屏会停止录音。朗读时请先停止录音，避免把译文再次收进去。</p></details>
+        <details className="inline-help"><summary>录音怎么用<ChevronDown /></summary><p>谁说话就长按谁那一侧的按钮，松手后译文会出现在双方完整对话中，并自动用另一侧语言朗读。快速双击开启持续录音，再点一次停止。</p><p>持续录音会归到启动按钮对应的人。翻译需要联网；切到后台或锁屏会停止录音。</p></details>
       </div>}
     </DialogContent>
   </Dialog>

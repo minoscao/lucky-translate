@@ -1,9 +1,9 @@
 'use client';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { createConversationStore, language, Pair, RecordGesture, RecordMode, Translation } from '@/lib/translation';
+import { createConversationStore, language, Pair, RecordGesture, RecordMode, Speaker, Translation } from '@/lib/translation';
 import { VoiceRecorder } from '@/lib/voice-recorder';
 
-type Job = { audio?: Blob; text?: string; pair: Pair; replaceId?: number };
+type Job = { audio?: Blob; text?: string; pair: Pair; replaceId?: number; speaker: Speaker; autoSpeakSide?: 0 | 1 };
 export function useTranslator() {
   const [pair, setPair] = useState<Pair>(['en', 'zh-CN']);
   const [selfOnTop, setSelfOnTop] = useState(false);
@@ -18,9 +18,12 @@ export function useTranslator() {
   const [multiplier, setMultiplier] = useState(1);
   const [needsSettings, setNeedsSettings] = useState(false);
   const [failed, setFailed] = useState<Job>();
+  const [autoSpeech, setAutoSpeech] = useState<{ id: number; text: string; lang: string }>();
   const gesture = useRef(new RecordGesture()), recorder = useRef<VoiceRecorder | undefined>(undefined);
-  const live = useRef({ pair, credential });
-  useEffect(() => { live.current = { pair, credential }; }, [pair, credential]);
+  const live = useRef({ pair, credential, selfOnTop });
+  useEffect(() => { live.current = { pair, credential, selfOnTop }; }, [pair, credential, selfOnTop]);
+  const activeCapture = useRef<{ pair: Pair; speaker: Speaker; autoSpeakSide?: 0 | 1 }>({ pair, speaker: 'self' });
+  const speechSequence = useRef(0);
   const generation = useRef(0), active = useRef(false), queue = useRef<Job[]>([]);
   const controller = useRef<AbortController | undefined>(undefined);
   const holdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -61,10 +64,14 @@ export function useTranslator() {
         if (token !== generation.current || !mounted.current) return;
         if (data.empty) { setNotice('没有听清，请再说一次'); return; }
         if (typeof data.upper !== 'string' || typeof data.lower !== 'string' || typeof data.original !== 'string') throw new Error('没有收到完整译文，请重试');
-        const result: Translation = { upper: data.upper, lower: data.lower, original: data.original, pair: job.pair, id: Date.now() };
+        const result: Translation = { upper: data.upper, lower: data.lower, original: data.original, pair: job.pair, id: Date.now(), speaker: job.speaker };
         const received = data.usage && typeof data.usage === 'object' ? data.usage as Record<string, unknown> : {};
         setUsage(current => ({ tokens: current.tokens + (typeof received.tokens === 'number' && Number.isFinite(received.tokens) ? Math.max(0, received.tokens) : 0), cost: current.cost + (typeof received.cost === 'number' && Number.isFinite(received.cost) ? Math.max(0, received.cost) : 0) }));
         if (job.replaceId !== undefined) conversation.replace(job.replaceId, { ...result, id: job.replaceId }); else conversation.append(result);
+        if (job.autoSpeakSide !== undefined) {
+          const side = job.autoSpeakSide;
+          setAutoSpeech({ id: ++speechSequence.current, text: side === 0 ? result.upper : result.lower, lang: job.pair[side] });
+        }
         setNotice(job.replaceId !== undefined ? '已保存并重新翻译' : '');
       })
       .catch(cause => {
@@ -85,10 +92,12 @@ export function useTranslator() {
     if (queue.current.length >= 4) { setError('翻译暂时跟不上，已停止录音；最后一句未发送，请稍后重说'); void stop(false); return; }
     queue.current.push(job); setPending(queue.current.length + (pumping.current ? 1 : 0)); pumpRef.current();
   }, [stop]);
-  const start = async () => {
+  const speakerForSide = (side: 0 | 1): Speaker => (live.current.selfOnTop ? side === 0 : side === 1) ? 'self' : 'other';
+  const start = async (side: 0 | 1) => {
     if (!live.current.credential.trim()) { gesture.current.cancel(); sync(); setNeedsSettings(true); return; }
     if (!navigator.onLine) { gesture.current.cancel(); sync(); setError('当前没有网络，请联网后再试'); return; }
     setError(''); setNotice(''); setFailed(undefined); setPhase('permission'); active.current = true;
+    activeCapture.current = { pair: [...live.current.pair], speaker: speakerForSide(side), autoSpeakSide: gesture.current.mode === 'hold' ? (1 - side) as 0 | 1 : undefined };
     const attempt = ++recordingRequest.current;
     window.speechSynthesis?.cancel();
     try {
@@ -105,18 +114,18 @@ export function useTranslator() {
       setError(e.name === 'NotAllowedError' ? '请允许使用麦克风，再重新长按或双击' : e.name === 'NotFoundError' ? '没有找到麦克风，可先输入文字翻译' : e.name === 'NotReadableError' ? '麦克风被占用，请关闭其他录音应用后重试' : e.message || '无法开启麦克风，请重试');
     }
   };
-  const dispatch = (action: 'start' | 'stop' | undefined) => { sync(); if (action === 'start') void start(); if (action === 'stop') void stop(); };
-  const pointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const dispatch = (action: 'start' | 'stop' | undefined, side: 0 | 1) => { sync(); if (action === 'start') void start(side); if (action === 'stop') void stop(); };
+  const pointerDown = (event: React.PointerEvent<HTMLButtonElement>, side: 0 | 1) => {
     if (!event.isPrimary || event.button !== 0 || pointerOwner.current !== undefined || phase === 'stopping') return false;
     pointerOwner.current = event.pointerId;
     event.currentTarget.setPointerCapture(event.pointerId);
     try { recorder.current?.prepare(); } catch { /* start() reports unavailable audio */ }
     gesture.current.down(performance.now());
-    clearTimeout(holdTimer.current); holdTimer.current = setTimeout(() => dispatch(gesture.current.hold(performance.now())), RecordGesture.HOLD_MS + 5);
+    clearTimeout(holdTimer.current); holdTimer.current = setTimeout(() => dispatch(gesture.current.hold(performance.now()), side), RecordGesture.HOLD_MS + 5);
     return true;
   };
-  const pointerUp = (event: React.PointerEvent<HTMLButtonElement>) => { if (pointerOwner.current !== event.pointerId) return; pointerOwner.current = undefined; clearTimeout(holdTimer.current); dispatch(gesture.current.up(performance.now())); };
-  const toggle = () => { if (pointerOwner.current !== undefined) return; try { recorder.current?.prepare(); } catch {} dispatch(gesture.current.toggle()); };
+  const pointerUp = (event: React.PointerEvent<HTMLButtonElement>, side: 0 | 1) => { if (pointerOwner.current !== event.pointerId) return; pointerOwner.current = undefined; clearTimeout(holdTimer.current); dispatch(gesture.current.up(performance.now()), side); };
+  const toggle = (side: 0 | 1) => { if (pointerOwner.current !== undefined) return; try { recorder.current?.prepare(); } catch {} dispatch(gesture.current.toggle(), side); };
   const dispose = useCallback(() => {
     mounted.current = false; generation.current++; controller.current?.abort();
     clearTimeout(holdTimer.current); clearTimeout(limitTimer.current); window.speechSynthesis?.cancel();
@@ -124,7 +133,7 @@ export function useTranslator() {
   useEffect(() => {
     mounted.current = true;
     const currentRecorder = new VoiceRecorder({
-      onSentence: audio => { if (mounted.current && !document.hidden) enqueue({ audio, pair: [...live.current.pair] }); },
+      onSentence: audio => { if (mounted.current && !document.hidden) enqueue({ audio, ...activeCapture.current, pair: [...activeCapture.current.pair] }); },
       onLevel: value => { if (mounted.current) setLevel(value); },
       onError: message => { if (mounted.current) { setError(message); void stop(false); } },
     });
@@ -152,7 +161,7 @@ export function useTranslator() {
     try { localStorage.setItem('lucky-preferences', JSON.stringify({ pair: value, selfOnTop })); } catch {}
   };
   return {
-    pair, selfOnTop, changePair, mode, phase, level, pending, error, notice, history, credential, usage, multiplier,
+    pair, selfOnTop, changePair, mode, phase, level, pending, error, notice, history, credential, usage, multiplier, autoSpeech,
     setMultiplier: (value: number) => { if (!Number.isFinite(value) || value < .1 || value > 100) return; setMultiplier(value); try { localStorage.setItem('lucky-price-multiplier', String(value)); } catch {} },
     swapSides: () => {
       if (mode !== 'idle' || pending || phase !== 'ready') return false;
@@ -173,8 +182,8 @@ export function useTranslator() {
     },
     failed, retry: () => { if (failed) { setError(''); const job = failed; setFailed(undefined); enqueue(job); } },
     clear: () => { cancel(); conversation.clear(); setUsage({ tokens: 0, cost: 0 }); setError(''); setFailed(undefined); setNotice('已清空本次对话及用量'); },
-    submitText: (text: string) => { if (!credential) { setNeedsSettings(true); return false; } setError(''); enqueue({ text, pair: [...pair] }); return true; },
-    retranslate: (id: number, text: string) => { if (!credential) { setNeedsSettings(true); return false; } setError(''); enqueue({ text, pair: [...pair], replaceId: id }); return true; },
+    submitText: (text: string, side: 0 | 1) => { if (!credential) { setNeedsSettings(true); return false; } setError(''); enqueue({ text, pair: [...pair], speaker: speakerForSide(side) }); return true; },
+    retranslate: (id: number, text: string) => { if (!credential) { setNeedsSettings(true); return false; } const existing = history.find(item => item.id === id); setError(''); enqueue({ text, pair: [...pair], replaceId: id, speaker: existing?.speaker || 'self' }); return true; },
     stop, toggle, pointerDown, pointerUp, setError,
   };
 }

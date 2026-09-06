@@ -27,12 +27,13 @@ test('choosing the other language swaps the pair; all panels share one pair', ()
 });
 test('inline conversation retains older turns and follows its language when sides swap', () => {
   const history = [
-    { id: 1, original: '你好', upper: 'Hello', lower: '你好', pair: ['en', 'zh-CN'] },
-    { id: 2, original: '下一句', upper: '下一句', lower: 'Next sentence', pair: ['zh-CN', 'en'] },
-    { id: 3, original: 'Bonjour', upper: 'Bonjour', lower: 'Hello again', pair: ['fr', 'en'] },
+    { id: 1, original: '你好', upper: 'Hello', lower: '你好', pair: ['en', 'zh-CN'], speaker: 'other' },
+    { id: 2, original: '下一句', upper: '下一句', lower: 'Next sentence', pair: ['zh-CN', 'en'], speaker: 'self' },
+    { id: 3, original: 'Bonjour', upper: 'Bonjour', lower: 'Hello again', pair: ['fr', 'en'], speaker: 'other' },
   ];
   assert.deepEqual(transcriptForLanguage(history, 'en').map(item => item.text), ['Hello', 'Next sentence', 'Hello again']);
   assert.deepEqual(transcriptForLanguage(history, 'zh-CN').map(item => item.text), ['你好', '下一句']);
+  assert.deepEqual(transcriptForLanguage(history, 'en').map(item => item.speaker), ['other', 'self', 'other']);
   assert.deepEqual(transcriptForLanguage(history, 'ja'), []);
 });
 const processorSource = await readFile(new URL('../public/voice-processor.js', import.meta.url), 'utf8');
@@ -143,16 +144,16 @@ test('upstream failure and incomplete output are surfaced without leaking provid
 test('the next queued request sees the completed turn immediately; full export retains more than 50 turns', () => {
   const store = createConversationStore(); let notifications = 0;
   const unsubscribe = store.subscribe(() => { notifications++; });
-  for (let i = 1; i <= 55; i++) store.append({ id: i, original: `原句${i}`, upper: `English ${i}`, lower: `中文${i}`, pair: ['en', 'zh-CN'] });
+  for (let i = 1; i <= 55; i++) store.append({ id: i, original: `原句${i}`, upper: `English ${i}`, lower: `中文${i}`, pair: ['en', 'zh-CN'], speaker: i % 2 ? 'self' : 'other' });
   assert.equal(store.snapshot().length, 55);
   assert.deepEqual(store.context(), ['原句50', '原句51', '原句52', '原句53', '原句54', '原句55']);
   const text = conversationText(store.snapshot(), 'Mia');
-  assert.match(text, /Mia/); assert.match(text, /1\.\nEnglish: English 1/);
-  assert.match(text, /55\.\nEnglish: English 55/); assert.match(text, /原文: 原句55/);
-  store.append({ id: 56, original: '长'.repeat(2000), upper: 'Long', lower: '长', pair: ['en', 'zh-CN'] });
+  assert.match(text, /Mia/); assert.match(text, /1\. Mia\nEnglish: English 1/);
+  assert.match(text, /55\. Mia\nEnglish: English 55/); assert.match(text, /原文: 原句55/);
+  store.append({ id: 56, original: '长'.repeat(2000), upper: 'Long', lower: '长', pair: ['en', 'zh-CN'], speaker: 'other' });
   assert.equal(store.context().at(-1).length, CONTEXT_LIMITS.characters);
   assert.equal(store.snapshot().at(-1).original.length, 2000, 'context limit must not truncate the export');
-  store.replace(55, { id: 55, original: '改过的原句', upper: 'Edited', lower: '已修改', pair: ['en', 'zh-CN'] });
+  store.replace(55, { id: 55, original: '改过的原句', upper: 'Edited', lower: '已修改', pair: ['en', 'zh-CN'], speaker: 'self' });
   assert.equal(store.snapshot().length, 56); assert.equal(store.snapshot().find(item => item.id === 55).original, '改过的原句');
   assert.deepEqual(store.context(55), ['原句49', '原句50', '原句51', '原句52', '原句53', '原句54']);
   store.clear(); assert.deepEqual(store.snapshot(), []); assert.deepEqual(store.context(), []);

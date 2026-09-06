@@ -18,6 +18,7 @@ export const LANGUAGES = [
 ] as const;
 export type LanguageCode = (typeof LANGUAGES)[number]['code'];
 export type Pair = [LanguageCode, LanguageCode];
+export type Speaker = 'self' | 'other';
 export type RecordMode = 'idle' | 'hold' | 'continuous';
 export const language = (code: string) => LANGUAGES.find(item => item.code === code);
 export function selectLanguage(pair: Pair, side: 0 | 1, code: LanguageCode): Pair {
@@ -25,7 +26,7 @@ export function selectLanguage(pair: Pair, side: 0 | 1, code: LanguageCode): Pai
   if (next[1 - side] === code) next[1 - side] = pair[side];
   return next;
 }
-export type Translation = { original: string; upper: string; lower: string; pair: Pair; id: number };
+export type Translation = { original: string; upper: string; lower: string; pair: Pair; id: number; speaker: Speaker };
 export const CONTEXT_LIMITS = { turns: 6, characters: 1000 } as const;
 /** One in-memory source for the transcript and the next queued request. */
 export function createConversationStore() {
@@ -45,12 +46,12 @@ export function createConversationStore() {
   };
 }
 export function transcriptForLanguage(history: Translation[], code: LanguageCode) {
-  return history.flatMap(item => item.pair[0] === code ? [{ id: item.id, text: item.upper }] : item.pair[1] === code ? [{ id: item.id, text: item.lower }] : []);
+  return history.flatMap(item => item.pair[0] === code ? [{ id: item.id, text: item.upper, speaker: item.speaker }] : item.pair[1] === code ? [{ id: item.id, text: item.lower, speaker: item.speaker }] : []);
 }
 
 export function conversationText(history: Translation[], name: string) {
   return [`Lucky · ${name} · 完整对话`, ...history.map((item, index) =>
-    `${index + 1}.\n${language(item.pair[0])?.label}: ${item.upper}\n${language(item.pair[1])?.label}: ${item.lower}\n原文: ${item.original}`,
+    `${index + 1}. ${item.speaker === 'self' ? name : 'other speaks'}\n${language(item.pair[0])?.label}: ${item.upper}\n${language(item.pair[1])?.label}: ${item.lower}\n原文: ${item.original}`,
   )].join('\n\n');
 }
 
