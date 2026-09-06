@@ -6,13 +6,17 @@ export async function POST(request: Request) {
   const key = request.headers.get('x-translation-key')?.trim();
   if (!key || key.length > 512 || /[\r\n]/.test(key)) return reply({ error: '请填写有效的 OpenAI 服务密钥' }, 401);
   try {
-    const response = await fetch('https://api.openai.com/v1/models/gpt-4o-mini', {
-      method: 'GET', redirect: 'manual', signal: AbortSignal.any([request.signal, AbortSignal.timeout(20000)]),
-      headers: { Authorization: `Bearer ${key}` },
+    // Verify the exact API path used by translation. Model metadata access can be
+    // restricted independently and caused working project keys to be rejected.
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST', redirect: 'manual', signal: AbortSignal.any([request.signal, AbortSignal.timeout(20000)]),
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'OK' }], max_tokens: 1 }),
     });
     if (response.ok) return reply({ valid: true });
     if (response.status === 401) return reply({ error: '这个服务密钥无效，请重新复制完整密钥' }, 401);
-    if (response.status === 403 || response.status === 404) return reply({ error: '这个密钥没有使用轻量翻译模型的权限' }, 403);
+    if (response.status === 403) return reply({ error: 'OpenAI 拒绝了请求，请检查该项目的模型权限或地区限制' }, 403);
+    if (response.status === 404) return reply({ error: '当前项目暂时无法调用轻量翻译模型' }, 404);
     if (response.status === 429) return reply({ error: '密钥有效，但当前账户额度不足或请求较多' }, 429);
     return reply({ error: '暂时无法验证密钥，请稍后重试' }, 502);
   } catch (error) {

@@ -257,13 +257,14 @@ const keyRoute = await import('data:text/javascript;base64,' + Buffer.from(keyJs
 function keyRequest(key = 'test-only-not-a-real-key') {
   return new Request('https://translator.test/api/key', { method: 'POST', headers: { Origin: 'https://translator.test', 'x-translation-key': key } });
 }
-test('key verification checks the economical model without making a paid generation request', async () => {
+test('key verification checks the same economical chat endpoint used by translation', async () => {
   const oldFetch = globalThis.fetch; let call;
-  globalThis.fetch = async (url, options) => { call = { url, options }; return Response.json({ id: 'gpt-4o-mini' }); };
+  globalThis.fetch = async (url, options) => { call = { url, options }; return Response.json({ choices: [{ message: { content: 'OK' } }] }); };
   try {
     const response = await keyRoute.POST(keyRequest()); assert.equal(response.status, 200); assert.deepEqual(await response.json(), { valid: true });
-    assert.equal(call.url, 'https://api.openai.com/v1/models/gpt-4o-mini'); assert.equal(call.options.method, 'GET');
+    assert.equal(call.url, 'https://api.openai.com/v1/chat/completions'); assert.equal(call.options.method, 'POST');
     assert.equal(call.options.headers.Authorization, 'Bearer test-only-not-a-real-key');
+    assert.deepEqual(JSON.parse(call.options.body), { model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'OK' }], max_tokens: 1 });
   } finally { globalThis.fetch = oldFetch; }
 });
 test('key verification explains invalid credentials and quota limits', async () => {
