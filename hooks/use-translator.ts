@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createConversationStore, language, Pair, RecordGesture, RecordMode, Speaker, Translation } from '@/lib/translation';
 import { VoiceRecorder } from '@/lib/voice-recorder';
+import { translateDirect, TranslationProvider } from '@/lib/direct-api';
 
 type Job = { audio?: Blob; text?: string; pair: Pair; replaceId?: number; speaker: Speaker; autoSpeakSide?: 0 | 1 };
 type UsageTotals = { day: string; dayTokens: number; dayCost: number; month: string; monthTokens: number; monthCost: number; totalTokens: number; totalCost: number };
@@ -23,7 +24,8 @@ export function useTranslator() {
   const [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [conversation] = useState(createConversationStore);
   const history = useSyncExternalStore(conversation.subscribe, conversation.snapshot, conversation.snapshot);
-  const [credential, setCredential] = useState('');
+  const [openaiKey, setOpenaiKey] = useState(''), [deepseekKey, setDeepseekKey] = useState('');
+  const [translationProvider, setTranslationProvider] = useState<TranslationProvider>('openai');
   const [usage, setUsage] = useState({ tokens: 0, cost: 0 });
   const [usageTotals, setUsageTotals] = useState<UsageTotals>(emptyUsageTotals);
   const [multiplier, setMultiplier] = useState(1);
@@ -31,9 +33,9 @@ export function useTranslator() {
   const [failed, setFailed] = useState<Job>();
   const [autoSpeech, setAutoSpeech] = useState<{ id: number; text: string; lang: string }>();
   const gesture = useRef(new RecordGesture()), recorder = useRef<VoiceRecorder | undefined>(undefined);
-  const live = useRef({ pair, credential, selfOnTop });
-  useEffect(() => { live.current = { pair, credential, selfOnTop }; }, [pair, credential, selfOnTop]);
-  const activeCapture = useRef<{ pair: Pair; speaker: Speaker; autoSpeakSide?: 0 | 1 }>({ pair, speaker: 'self' });
+  const live = useRef({ pair, openaiKey, deepseekKey, translationProvider, selfOnTop });
+  useEffect(() => { live.current = { pair, openaiKey, deepseekKey, translationProvider, selfOnTop }; }, [pair, openaiKey, deepseekKey, translationProvider, selfOnTop]);
+  const activeCapture = useRef<{ pair: Pair; speaker: Speaker; side: 0 | 1; autoSpeakSide?: 0 | 1 }>({ pair, speaker: 'self', side: 1 });
   const speechSequence = useRef(0);
   const generation = useRef(0), active = useRef(false), queue = useRef<Job[]>([]);
   const controller = useRef<AbortController | undefined>(undefined);
@@ -84,20 +86,12 @@ export function useTranslator() {
     const token = generation.current, abort = new AbortController(); controller.current = abort;
     pumping.current = true; setPending(queue.current.length + 1);
     const timeout = setTimeout(() => abort.abort('timeout'), 65000);
-    const form = new FormData(); form.set('upper', job.pair[0]); form.set('lower', job.pair[1]);
-    form.set('context', JSON.stringify(conversation.context(job.replaceId)));
-    if (job.audio) form.set('audio', job.audio, 'speech.wav'); else form.set('text', job.text || '');
-    fetch('/api/translate', { method: 'POST', body: form, headers: { 'x-translation-key': live.current.credential }, signal: abort.signal })
-      .then(async response => {
-        const raw = await response.json().catch(() => ({ error: '服务连接中断，请重试' }));
-        const data = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-        if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : '翻译失败，请重试');
+    translateDirect({ audio: job.audio, text: job.text, pair: job.pair, context: conversation.context(job.replaceId), provider: live.current.translationProvider, openaiKey: live.current.openaiKey, deepseekKey: live.current.deepseekKey, signal: abort.signal })
+      .then(data => {
         if (token !== generation.current || !mounted.current) return;
         if (data.empty) { setNotice('没有听清，请再说一次'); return; }
-        if (typeof data.upper !== 'string' || typeof data.lower !== 'string' || typeof data.original !== 'string') throw new Error('没有收到完整译文，请重试');
         const result: Translation = { upper: data.upper, lower: data.lower, original: data.original, pair: job.pair, id: Date.now(), speaker: job.speaker };
-        const received = data.usage && typeof data.usage === 'object' ? data.usage as Record<string, unknown> : {};
-        addUsage(typeof received.tokens === 'number' ? received.tokens : 0, typeof received.cost === 'number' ? received.cost : 0);
+        addUsage(data.usage.tokens, data.usage.cost);
         if (job.replaceId !== undefined) conversation.replace(job.replaceId, { ...result, id: job.replaceId }); else conversation.append(result);
         if (job.autoSpeakSide !== undefined) {
           const side = job.autoSpeakSide;
@@ -125,14 +119,15 @@ export function useTranslator() {
   }, [stop]);
   const speakerForSide = (side: 0 | 1): Speaker => (live.current.selfOnTop ? side === 0 : side === 1) ? 'self' : 'other';
   const start = async (side: 0 | 1) => {
-    if (!live.current.credential.trim()) { gesture.current.cancel(); sync(); setNeedsSettings(true); return; }
+    const translationKey = live.current.translationProvider === 'deepseek' ? live.current.deepseekKey : live.current.openaiKey;
+    if (!live.current.openaiKey.trim() || !translationKey.trim()) { gesture.current.cancel(); sync(); setNeedsSettings(true); return; }
     if (!navigator.onLine) { gesture.current.cancel(); sync(); setError('当前没有网络，请联网后再试'); return; }
     setError(''); setNotice(''); setFailed(undefined); setPhase('permission'); active.current = true;
-    activeCapture.current = { pair: [...live.current.pair], speaker: speakerForSide(side), autoSpeakSide: gesture.current.mode === 'hold' ? (1 - side) as 0 | 1 : undefined };
+    activeCapture.current = { pair: [...live.current.pair], speaker: speakerForSide(side), side, autoSpeakSide: gesture.current.mode === 'hold' ? (1 - side) as 0 | 1 : undefined };
     const attempt = ++recordingRequest.current;
     window.speechSynthesis?.cancel();
     try {
-      const started = await recorder.current!.start();
+      const started = await recorder.current!.start(gesture.current.mode === 'continuous' ? 'continuous' : 'hold');
       if (attempt !== recordingRequest.current || !active.current || gesture.current.mode === 'idle') return;
       if (!started) { gesture.current.cancel(); sync(); setPhase('ready'); return; }
       setPhase('listening'); navigator.vibrate?.(20);
@@ -164,7 +159,12 @@ export function useTranslator() {
   useEffect(() => {
     mounted.current = true;
     const currentRecorder = new VoiceRecorder({
-      onSentence: audio => { if (mounted.current && !document.hidden) enqueue({ audio, ...activeCapture.current, pair: [...activeCapture.current.pair] }); },
+      onSentence: (audio, boundary) => {
+        if (!mounted.current || document.hidden) return;
+        if (boundary === 'speaker-before') { activeCapture.current.side = (1 - activeCapture.current.side) as 0 | 1; activeCapture.current.speaker = speakerForSide(activeCapture.current.side); }
+        enqueue({ audio, pair: [...activeCapture.current.pair], speaker: activeCapture.current.speaker, autoSpeakSide: activeCapture.current.autoSpeakSide });
+        if (boundary === 'speaker-after') { activeCapture.current.side = (1 - activeCapture.current.side) as 0 | 1; activeCapture.current.speaker = speakerForSide(activeCapture.current.side); }
+      },
       onLevel: value => { if (mounted.current) setLevel(value); },
       onError: message => { if (mounted.current) { setError(message); void stop(false); } },
     });
@@ -174,8 +174,10 @@ export function useTranslator() {
       try {
         const saved = JSON.parse(localStorage.getItem('lucky-preferences') || 'null');
         if (saved && Array.isArray(saved.pair) && saved.pair.length === 2 && saved.pair[0] !== saved.pair[1] && saved.pair.every((code: string) => language(code))) { setPair(saved.pair as Pair); setSelfOnTop(Boolean(saved.selfOnTop)); }
-        const savedKey = localStorage.getItem('lucky-openai-key')?.trim();
-        if (savedKey && savedKey.length <= 512 && !/[\r\n]/.test(savedKey)) setCredential(savedKey);
+        const savedOpenAI = localStorage.getItem('lucky-openai-key')?.trim(), savedDeepSeek = localStorage.getItem('lucky-deepseek-key')?.trim();
+        if (savedOpenAI && savedOpenAI.length <= 512 && !/[\r\n]/.test(savedOpenAI)) setOpenaiKey(savedOpenAI);
+        if (savedDeepSeek && savedDeepSeek.length <= 512 && !/[\r\n]/.test(savedDeepSeek)) setDeepseekKey(savedDeepSeek);
+        if (localStorage.getItem('lucky-translation-provider') === 'deepseek') setTranslationProvider('deepseek');
         const savedMultiplier = Number(localStorage.getItem('lucky-price-multiplier'));
         if (Number.isFinite(savedMultiplier) && savedMultiplier >= .1 && savedMultiplier <= 100) setMultiplier(savedMultiplier);
         const savedUsage = JSON.parse(localStorage.getItem('lucky-usage-totals') || 'null') as Partial<UsageTotals> | null;
@@ -198,7 +200,8 @@ export function useTranslator() {
     try { localStorage.setItem('lucky-preferences', JSON.stringify({ pair: value, selfOnTop })); } catch {}
   };
   return {
-    pair, selfOnTop, changePair, mode, phase, level, pending, error, notice, history, credential, usage, usageTotals, multiplier, autoSpeech, addUsage,
+    pair, selfOnTop, changePair, mode, phase, level, pending, error, notice, history, openaiKey, deepseekKey, translationProvider, usage, usageTotals, multiplier, autoSpeech, addUsage,
+    canTranslate: Boolean(translationProvider === 'deepseek' ? deepseekKey : openaiKey),
     setMultiplier: (value: number) => { if (!Number.isFinite(value) || value < .1 || value > 100) return; setMultiplier(value); try { localStorage.setItem('lucky-price-multiplier', String(value)); } catch {} },
     swapSides: () => {
       if (mode !== 'idle' || pending || phase !== 'ready') return false;
@@ -207,20 +210,20 @@ export function useTranslator() {
       try { localStorage.setItem('lucky-preferences', JSON.stringify({ pair: value, selfOnTop: !selfOnTop })); } catch {}
       return true;
     },
-    needsSettings, setNeedsSettings, setCredential: (value: string) => {
-      cancel(); const key = value.trim(); setCredential(key);
-      try { localStorage.setItem('lucky-openai-key', key); } catch {}
+    needsSettings, setNeedsSettings, setCredentials: (value: { openaiKey: string; deepseekKey: string; provider: TranslationProvider }) => {
+      cancel(); const openai = value.openaiKey.trim(), deepseek = value.deepseekKey.trim(); setOpenaiKey(openai); setDeepseekKey(deepseek); setTranslationProvider(value.provider);
+      try { localStorage.setItem('lucky-openai-key', openai); localStorage.setItem('lucky-deepseek-key', deepseek); localStorage.setItem('lucky-translation-provider', value.provider); } catch {}
       setError(''); setFailed(undefined); setNotice('已保存到这台设备，录音后开始翻译');
     },
-    clearCredential: () => {
-      cancel(); setCredential('');
-      try { localStorage.removeItem('lucky-openai-key'); } catch {}
+    clearCredentials: () => {
+      cancel(); setOpenaiKey(''); setDeepseekKey(''); setTranslationProvider('openai');
+      try { localStorage.removeItem('lucky-openai-key'); localStorage.removeItem('lucky-deepseek-key'); localStorage.removeItem('lucky-translation-provider'); } catch {}
       setError(''); setFailed(undefined); setNotice('已从这台设备清除服务密钥');
     },
     failed, retry: () => { if (failed) { setError(''); const job = failed; setFailed(undefined); enqueue(job); } },
     clear: () => { cancel(); conversation.clear(); setUsage({ tokens: 0, cost: 0 }); setError(''); setFailed(undefined); setNotice('已清空本次对话及用量'); },
-    submitText: (text: string, side: 0 | 1) => { if (!credential) { setNeedsSettings(true); return false; } setError(''); enqueue({ text, pair: [...pair], speaker: speakerForSide(side) }); return true; },
-    retranslate: (id: number, text: string) => { if (!credential) { setNeedsSettings(true); return false; } const existing = history.find(item => item.id === id); setError(''); enqueue({ text, pair: [...pair], replaceId: id, speaker: existing?.speaker || 'self' }); return true; },
-    stop, toggle, pointerDown, pointerUp, setError,
+    submitText: (text: string, side: 0 | 1) => { const key = translationProvider === 'deepseek' ? deepseekKey : openaiKey; if (!key) { setNeedsSettings(true); return false; } setError(''); enqueue({ text, pair: [...pair], speaker: speakerForSide(side) }); return true; },
+    retranslate: (id: number, text: string) => { const key = translationProvider === 'deepseek' ? deepseekKey : openaiKey; if (!key) { setNeedsSettings(true); return false; } const existing = history.find(item => item.id === id); setError(''); enqueue({ text, pair: [...pair], replaceId: id, speaker: existing?.speaker || 'self' }); return true; },
+    stop, toggle, pointerDown, pointerUp, setError, setNotice,
   };
 }

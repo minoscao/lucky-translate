@@ -41,7 +41,10 @@ function processor(rate = 48000) {
   let Processor; const messages = [];
   class Worklet { constructor() { this.port = { postMessage: data => messages.push(data) }; } }
   vm.runInNewContext(processorSource, { sampleRate: rate, AudioWorkletProcessor: Worklet, registerProcessor: (_, value) => { Processor = value; } });
-  return { p: new Processor(), messages, feed(seconds, amplitude) { for (let n = 0; n < Math.ceil(seconds * rate / 128); n++) this.p.process([[new Float32Array(128).fill(amplitude)]]); } };
+  return { p: new Processor(), messages, phase: 0,
+    feed(seconds, amplitude) { for (let n = 0; n < Math.ceil(seconds * rate / 128); n++) this.p.process([[new Float32Array(128).fill(amplitude)]]); },
+    tone(seconds, hz, amplitude = .08) { for (let n = 0; n < Math.ceil(seconds * rate / 128); n++) { const chunk = new Float32Array(128); for (let i = 0; i < chunk.length; i++) chunk[i] = Math.sin(this.phase++ * Math.PI * 2 * hz / rate) * amplitude; this.p.process([[chunk]]); } },
+  };
 }
 test('silence sends no audio; stopping sends the final sentence with valid WAV header', () => {
   const capture = processor(); capture.feed(2, 0); assert.equal(capture.messages.filter(m => m.type === 'sentence').length, 0);
@@ -51,12 +54,18 @@ test('silence sends no audio; stopping sends the final sentence with valid WAV h
   assert.ok(capture.messages.some(m => m.type === 'flushed'));
   capture.feed(1, .2); assert.equal(capture.messages.filter(m => m.type === 'sentence').length, 1);
 });
-test('sentences split on silence and at a bounded length at 44.1/48 kHz', () => {
+test('hold mode keeps one sentence until release; continuous mode waits for five seconds of silence', () => {
   for (const rate of [44100, 48000]) {
-    const capture = processor(rate); capture.feed(.5, .08); capture.feed(.8, 0); capture.feed(21, .08); capture.p.port.onmessage({ data: { type: 'flush' } });
-    const speech = capture.messages.filter(m => m.type === 'sentence'); assert.equal(speech.length, 4);
-    for (const segment of speech) assert.ok(segment.wav.byteLength < 330000);
+    const hold = processor(rate); hold.p.port.onmessage({ data: { type: 'config', mode: 'hold' } }); hold.feed(.5, .08); hold.feed(6, 0);
+    assert.equal(hold.messages.filter(m => m.type === 'sentence').length, 0); hold.p.port.onmessage({ data: { type: 'flush' } }); assert.equal(hold.messages.filter(m => m.type === 'sentence').length, 1);
+    const continuous = processor(rate); continuous.p.port.onmessage({ data: { type: 'config', mode: 'continuous' } }); continuous.feed(.5, .08); continuous.feed(4.8, 0);
+    assert.equal(continuous.messages.filter(m => m.type === 'sentence').length, 0); continuous.feed(.3, 0); assert.equal(continuous.messages.filter(m => m.type === 'sentence').length, 1);
   }
+});
+test('continuous mode detects a clear speaker pitch change', () => {
+  const capture = processor(); capture.p.port.onmessage({ data: { type: 'config', mode: 'continuous' } });
+  capture.tone(1.6, 110); capture.tone(1.6, 240);
+  const speech = capture.messages.filter(m => m.type === 'sentence'); assert.ok(speech.length >= 1); assert.match(speech[0].boundary, /^speaker-/);
 });
 test('microphone permission arriving after release cannot start recording', async () => {
   let grant; let stopped = 0;
@@ -276,6 +285,43 @@ test('key verification explains invalid credentials and quota limits', async () 
     const limited = await keyRoute.POST(keyRequest()); assert.equal(limited.status, 429); assert.match((await limited.json()).error, /额度/);
     globalThis.fetch = async () => Response.json({ error: { code: 'unsupported_country_region_territory' } }, { status: 403 });
     const region = await keyRoute.POST(keyRequest()); assert.equal(region.status, 503); assert.match((await region.json()).error, /云端节点/);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+const directSource = (await readFile(new URL('../lib/direct-api.ts', import.meta.url), 'utf8'))
+  .replace("import { language, Pair } from './translation';", "const language = code => ({ en: { name: 'English' }, 'zh-CN': { name: 'Chinese (Simplified)' } })[code];");
+const directJs = ts.transpile(directSource, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext });
+const directApi = await import('data:text/javascript;base64,' + Buffer.from(directJs).toString('base64'));
+test('direct key verification calls the selected lightweight provider from the device', async () => {
+  const oldFetch = globalThis.fetch; let call;
+  globalThis.fetch = async (url, options) => { call = { url, options }; return Response.json({ choices: [{ message: { content: 'OK' } }] }); };
+  try {
+    await directApi.verifyDirectKey('deepseek', 'deepseek-test-key');
+    assert.equal(call.url, 'https://api.deepseek.com/chat/completions');
+    assert.equal(call.options.headers.get('Authorization'), 'Bearer deepseek-test-key');
+    const body = JSON.parse(call.options.body); assert.equal(body.model, 'deepseek-v4-flash'); assert.deepEqual(body.thinking, { type: 'disabled' });
+  } finally { globalThis.fetch = oldFetch; }
+});
+test('direct audio uses OpenAI transcription and the selected DeepSeek translation engine', async () => {
+  const oldFetch = globalThis.fetch; const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith('/audio/transcriptions')) return Response.json({ text: '你好', usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 } });
+    return Response.json({ choices: [{ finish_reason: 'stop', message: { content: '{"upper":"Hello","lower":"你好"}' } }], usage: { prompt_tokens: 20, completion_tokens: 4, total_tokens: 24, prompt_cache_hit_tokens: 5 } });
+  };
+  try {
+    const result = await directApi.translateDirect({ audio: new Blob(['RIFFxxxxWAVE'], { type: 'audio/wav' }), pair: ['en', 'zh-CN'], context: [], provider: 'deepseek', openaiKey: 'openai-key', deepseekKey: 'deepseek-key', signal: new AbortController().signal });
+    assert.equal(result.original, '你好'); assert.equal(result.upper, 'Hello'); assert.equal(result.lower, '你好');
+    assert.deepEqual(calls.map(call => call.url), ['https://api.openai.com/v1/audio/transcriptions', 'https://api.deepseek.com/chat/completions']);
+    assert.equal(JSON.parse(calls[1].options.body).model, 'deepseek-v4-flash');
+  } finally { globalThis.fetch = oldFetch; }
+});
+test('direct speech sends the saved playback speed and returns playable audio', async () => {
+  const oldFetch = globalThis.fetch; let body;
+  globalThis.fetch = async (_url, options) => { body = JSON.parse(options.body); return new Response('data: {"type":"speech.audio.delta","audio":"AQID"}\n\ndata: {"type":"speech.audio.done","usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}\n\ndata: [DONE]\n'); };
+  try {
+    const result = await directApi.synthesizeSpeechDirect({ text: '你好', language: 'zh-CN', speed: 1.5, key: 'openai-key', signal: new AbortController().signal });
+    assert.equal(body.speed, 1.5); assert.equal(body.model, 'gpt-4o-mini-tts'); assert.equal(result.audio.size, 3); assert.equal(result.usage.tokens, 5);
   } finally { globalThis.fetch = oldFetch; }
 });
 
