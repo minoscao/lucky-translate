@@ -58,7 +58,9 @@ async function coachRequest<T>(_key: string, messages: Array<{ role: 'system' | 
   const result = await response.json() as { content?: string; usage?: CoachUsage };
   const content = result.content;
   if (!content) throw new Error('English Coach 没有返回完整内容');
-  try { return { data: JSON.parse(content) as T, usage: result.usage || { tokens: 0, cost: 0 } }; }
+  const clean = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  const start = clean.indexOf('{'), end = clean.lastIndexOf('}');
+  try { return { data: JSON.parse(start >= 0 && end >= start ? clean.slice(start, end + 1) : clean) as T, usage: result.usage || { tokens: 0, cost: 0 } }; }
   catch { throw new Error('English Coach 返回内容不完整，请重试'); }
 }
 
