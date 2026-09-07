@@ -9,13 +9,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Textarea } from '@/components/ui/textarea';
 import { AccountSnapshot, accountRequest } from '@/lib/account';
+import { TimeEntry, TimeLedger } from '@/components/time-ledger';
+import { TextTimeRules } from '@/lib/text-time';
 
-type AdminUser = AccountSnapshot & { adminNote: string; createdAt: number; lastLoginAt: number | null };
+type AdminUser = AccountSnapshot & { adminNote: string; createdAt: number; lastLoginAt: number | null; timeLedger: TimeEntry[] };
 type Payment = { id: string; user_id: string; username: string; amount_cents: number; currency: string; status: string; note: string; paid_at: number; created_at: number };
 type Usage = { id: string; username: string; feature: string; model: string; input_tokens: number; cached_tokens: number; output_tokens: number; total_tokens: number; cost_micros: number; price_snapshot: string; created_at: number };
 type AdminData = {
   authenticated: boolean; deepseekConfigured: boolean; costMultiplier: number; users: AdminUser[]; payments: Payment[]; history: Usage[];
-  businessUnlocked: boolean; coachSkill: string;
+  businessUnlocked: boolean; coachSkill: string; timeRules: TextTimeRules;
   prices: Array<{ provider: string; model: string; period: string; cache_hit_micros_per_million: number; input_micros_per_million: number; output_micros_per_million: number; effective_at: number }>;
 };
 type Tab = 'business' | 'clients' | 'payment';
@@ -58,18 +60,21 @@ function UserEditor({ user, refresh }: { user: AdminUser; refresh: (data: AdminD
     </div>
     <label className="admin-note">备注<Input value={note} onChange={event => setNote(event.target.value)} maxLength={500} /></label>
     <footer><span>{message}</span><Button onClick={() => void save()} disabled={saving}>{saving ? <LoaderCircle className="spinning" /> : <CheckCircle2 />}保存客户</Button></footer>
+    <TimeLedger entries={user.timeLedger || []} />
   </article>;
 }
 
 function BusinessSettings({ data, update, error }: { data: AdminData; update: (data: AdminData) => void; error: (value: string) => void }) {
   const [apiKey, setApiKey] = useState(''), [multiplier, setMultiplier] = useState(String(data.costMultiplier)), [skill, setSkill] = useState(data.coachSkill), [superPassword, setSuperPassword] = useState('');
   const [saving, setSaving] = useState(false), [message, setMessage] = useState('');
+  const [wordSeconds, setWordSeconds] = useState(String(data.timeRules.secondsPerWord)), [characterSeconds, setCharacterSeconds] = useState(String(data.timeRules.secondsPerCharacter));
   const request = async (body: Record<string, unknown>) => {
     setSaving(true); setMessage(''); error('');
     try { const next = await accountRequest<AdminData>('/api/admin', { method: 'POST', body: JSON.stringify(body) }); update(next); setMessage('已保存'); }
     catch (cause) { error(cause instanceof Error ? cause.message : '保存失败'); } finally { setSaving(false); }
   };
   return <div className="admin-tab-content">
+    <section className="admin-section"><header><div><h2>对话时长折算</h2><span>按双方本次对话的文字计算，忽略播放倍速。修改只影响之后的对话。</span></div></header><div className="admin-user-fields"><label>英文及其他分词语言：秒 / 词<Input type="number" min="0.05" max="5" step="0.05" value={wordSeconds} onChange={event => setWordSeconds(event.target.value)} /></label><label>中文及中日韩文字：秒 / 字<Input type="number" min="0.05" max="5" step="0.05" value={characterSeconds} onChange={event => setCharacterSeconds(event.target.value)} /></label></div><p>训练、翻译 100% · 总结 10% · 空闲、等待和失败回复不扣时。</p><footer className="admin-action-footer"><span role="status">{message}</span><Button disabled={saving} onClick={() => void request({ action: 'set_text_time_rules', rules: { secondsPerWord: Number(wordSeconds), secondsPerCharacter: Number(characterSeconds) } })}>保存计时规则</Button></footer></section>
     <section className="admin-key-card"><div><h2>DeepSeek 服务密钥</h2><p>仅在服务端加密保存，客户页面不会显示。</p></div><Input type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={data.deepseekConfigured ? '输入新密钥即可替换' : '输入 DeepSeek API Key'} autoComplete="off" /><Button type="button" onClick={() => void request({ action: 'set_deepseek_key', key: apiKey }).then(() => setApiKey(''))} disabled={!apiKey || saving}>{saving ? <LoaderCircle className="spinning" /> : '保存密钥'}</Button></section>
     <section className="admin-key-card"><div><h2>客户费用显示倍率</h2><p>实际 $1.00，倍率 2.0 时客户看到 $2.00。</p></div><Input type="number" min="0.1" max="100" step="0.1" value={multiplier} onChange={event => setMultiplier(event.target.value)} /><Button type="button" onClick={() => void request({ action: 'set_cost_multiplier', multiplier: Number(multiplier) })} disabled={saving}>保存倍率</Button></section>
     <section className="admin-section skill-section"><header><div><p className="admin-eyebrow">COACH</p><h2>Current coach skill</h2><span>当前使用的完整规则。未解锁时只能阅读。</span></div>{data.businessUnlocked && <span className="member-state active">可编辑</span>}</header>

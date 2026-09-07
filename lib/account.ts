@@ -2,7 +2,7 @@ export type AccountSnapshot = {
   id: string; username: string; email: string | null; status: string; level: string; membershipExpiresAt: number | null; monthlyPrice: number;
   costMultiplier: number;
   limits: { dailySeconds: number; monthlySeconds: number; dailyTokens: number };
-  usage: { todayTokens: number; todayCost: number; todaySeconds: number; todayTrainingSeconds: number; todayTranslationSeconds: number; monthTokens: number; monthCost: number; monthSeconds: number; monthTrainingSeconds: number; monthTranslationSeconds: number; totalTokens: number; totalCost: number; totalSeconds: number };
+  usage: { todayTokens: number; todayCost: number; todaySeconds: number; todayTrainingSeconds: number; todayTranslationSeconds: number; monthTokens: number; monthCost: number; monthSeconds: number; monthTrainingSeconds: number; monthTranslationSeconds: number; totalTokens: number; totalCost: number; totalSeconds: number; totalTrainingSeconds: number };
   storage: { bytes: number; limitBytes: number; warning: boolean; ratio: number };
 };
 

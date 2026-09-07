@@ -5,6 +5,7 @@ import { audioToBase64 } from '@/lib/server/audio';
 import { deepSeekJson } from '@/lib/server/deepseek';
 import { json, sameOrigin } from '@/lib/server/http';
 import { CONTEXT_LIMITS, LANGUAGES } from '@/lib/translation';
+import { chargeTextTime } from '@/lib/server/text-time';
 
 const MAX_UPLOAD = 1024 * 1024;
 
@@ -53,7 +54,8 @@ export async function POST(request: Request) {
     const result = await deepSeekJson(account, '翻译', [{ role: 'system', content: interpreterPrompt(upper.name, lower.name) }, { role: 'user', content: JSON.stringify({ previous_utterances: context, current_utterance: source }) }], request.signal, 3000, audio instanceof File ? 2 : 1);
     let translated: { upper?: unknown; lower?: unknown }; try { translated = JSON.parse(result.content); } catch { return json({ error: '没有收到完整译文，请重试' }, 502); }
     if (typeof translated.upper !== 'string' || typeof translated.lower !== 'string' || !translated.upper.trim() || !translated.lower.trim()) return json({ error: '没有收到完整译文，请重试' }, 502);
-    return json({ original: source, upper: translated.upper.trim(), lower: translated.lower.trim(), model: 'deepseek-v4-flash', usage: { tokens: result.usage.tokens, cost: Number((result.usage.cost + speechCost).toFixed(12)) } });
+    const time = await chargeTextTime(account, 'translation', [translated.upper.trim(), translated.lower.trim()], '双向翻译', result.usage.eventId);
+    return json({ original: source, upper: translated.upper.trim(), lower: translated.lower.trim(), model: 'deepseek-v4-flash', usage: { tokens: result.usage.tokens, cost: Number((result.usage.cost + speechCost).toFixed(12)), time } });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : '无法完成翻译，请稍后重试' }, (error as { status?: number }).status || 500);
   }

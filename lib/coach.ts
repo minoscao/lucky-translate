@@ -5,7 +5,7 @@ export type CoachExercise = {
   type: 'cloze' | 'meaning' | 'grammar'; prompt: string; answer: string;
   initial: string; definition: string; options: string[]; explanation: string;
 };
-export type CoachUsage = { tokens: number; cost: number };
+export type CoachUsage = { tokens: number; cost: number; time?: { chargedSeconds: number; trainingTodaySeconds: number; trainingTotalSeconds: number } };
 export type CoachVocabulary = { word: string; definition: string };
 export type CoachGrammar = { point: string; example: string };
 export type CoachMistake = { original: string; better: string; reason: string; confidence: 'confirmed' };

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
-import { ArrowDownUp, ArrowLeft, ArrowUpFromLine, Check, ChevronDown, ChevronUp, CircleHelp, Copy, Download, GraduationCap, History, LoaderCircle, LockKeyhole, LogOut, Mic, Settings2, ShieldCheck, Square, Volume2, X } from 'lucide-react';
+import { ArrowDownUp, ArrowLeft, ArrowRight, ArrowUpFromLine, Check, ChevronDown, ChevronUp, CircleHelp, Copy, Download, GraduationCap, History, LoaderCircle, LockKeyhole, LogOut, Mic, Settings2, ShieldCheck, Square, Volume2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,7 @@ import { useCoach } from '@/hooks/use-coach';
 import { useTranslator } from '@/hooks/use-translator';
 import { synthesizeSpeechDirect } from '@/lib/direct-api';
 import { AccountSnapshot, accountRequest, saveCloudRecord } from '@/lib/account';
+import { TimeEntry, TimeLedger } from '@/components/time-ledger';
 import { LANGUAGES, LanguageCode, Pair, RecordGesture, conversationText, language, selectLanguage, transcriptForLanguage } from '@/lib/translation';
 
 type InstallEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
@@ -37,15 +38,30 @@ const IELTS_BANDS = [
 const validIeltsScore = (value: unknown): number | undefined => typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 9 ? value : undefined;
 
 const ONBOARDING_CARDS = [
-  { title: '先开口，再变好', subtitle: 'Start by talking', body: '不用先背单词，也不用先学语法。我们从一段真实对话开始。', note: 'No vocabulary lists or grammar drills first. We begin with a real conversation.' },
-  { title: '现在，忘记中文', subtitle: 'Think in English', body: '英国幼儿园的小朋友也不会从中文学英文。现在开始，尽量只用英文表达。', note: 'Children in an English nursery do not start from Chinese. From now on, try to express yourself in English.' },
-  { title: '从你的今天开始', subtitle: 'Start from where you are', body: '没有教材。Lucky 会从你现在会说的开始，每天陪你多走一点。', note: 'No textbook. Lucky starts with what you can say today, then helps you grow a little every day.' },
-  { title: '这是你最后一次在本 App 看到中文。', subtitle: 'Your progress will be visible', body: '每天总结、每周汇总、定期评估。即使只会几十个单词，也能一步步说出更长的句子。', note: 'Daily recaps, weekly reviews, and level checks make progress visible. Even a few dozen words can grow into long sentences.' },
+  { layout: 'cover', chapter: 'BEGIN', title: 'A few words.\nA real beginning.', subtitle: '只会几个词，也可以开始。', body: 'No word lists. No grammar lessons first. Tell Lucky one small thing about your day.', note: '不用等背完单词、学完语法。把今天的一件小事，先说给 Lucky 听。', image: '/lucky-story-start.webp', alt: 'A nervous tabby kitten hides behind textbooks. Lucky, the ragdoll teacher, encourages the kitten to start talking.', details: [] },
+  { layout: 'scene', chapter: 'LIVE IT', title: 'English, out\nin the world.', subtitle: '把英文，用在生活里。', body: 'Children learn by using words. You can, too. See an apple? Ask for it in English.', note: '就像孩子学说话，从眼前的东西开始。想买一颗苹果，就直接用英文说出来。', image: '/lucky-story-life.webp', alt: 'At a sunny outdoor fruit market, the kitten asks: An apple, please! Lucky watches supportively from behind.', details: [] },
+  { layout: 'sequence', chapter: 'GROW', title: 'A little more,\nevery day.', subtitle: '今天一个词，明天多说一点。', body: 'No fixed textbook. Lucky follows what you can say, then helps you take the next small step.', note: '没有统一教材。Lucky 跟着你实际说出的内容，调整问题和难度。', image: '/lucky-story-grow.webp', alt: 'Two comic panels: first the kitten says Tea. Later it offers tea to Lucky: I like tea. Would you like some?', details: [] },
+  { layout: 'recap', chapter: 'LOOK BACK', title: 'Look how far\nyou’ve come.', subtitle: '原来，我已经能说这么多了。', body: 'Your conversations become your own story of progress.', note: '聊过的生活，会变成你自己的学习记录。', image: '/lucky-story-recall.webp', alt: 'An overhead scrapbook of a week of conversations, vocabulary and grammar notes. Lucky and the kitten celebrate with a high five.', details: [{ title: 'Daily', body: 'Revisit your words & phrases', translation: '回顾今天的词汇与表达' }, { title: 'Weekly', body: 'See your progress over time', translation: '汇总进步，回看水平变化' }] },
 ] as const;
 
 function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [step, setStep] = useState(0), card = ONBOARDING_CARDS[step];
-  return <dialog className="onboarding-overlay" open aria-labelledby="onboarding-title"><section className="onboarding-card"><Image className="onboarding-art" src={`/lucky-onboarding-${step + 1}.webp`} width={512} height={512} alt="" unoptimized /><div className="onboarding-copy"><span>{step + 1} / {ONBOARDING_CARDS.length}</span><h1 id="onboarding-title">{card.title}</h1><strong>{card.subtitle}</strong><p>{card.body}</p><small lang="en">{card.note}</small></div><div className="onboarding-actions">{step > 0 && <Button type="button" variant="ghost" onClick={() => setStep(value => value - 1)}>上一张</Button>}<Button type="button" onClick={() => step === ONBOARDING_CARDS.length - 1 ? onComplete() : setStep(value => value + 1)}>{step === ONBOARDING_CARDS.length - 1 ? '现在开始' : '下一张'}</Button></div></section></dialog>;
+  const scrollArea = useRef<HTMLDivElement>(null);
+  useEffect(() => { scrollArea.current?.scrollTo({ top: 0 }); }, [step]);
+  return <Dialog open onOpenChange={value => { if (!value) onComplete(); }}>
+    <DialogContent className="story-reader" showCloseButton={false}>
+      <header className="story-toolbar"><span><strong>LUCKY</strong><span lang="en">How it works</span></span><Button variant="ghost" size="icon" aria-label="Close introduction" onClick={onComplete}><X aria-hidden="true" /></Button></header>
+      <div className="story-scroll" ref={scrollArea}>
+        <article key={card.layout} className="story-page" data-layout={card.layout} lang="en">
+          <div className="story-heading"><span className="story-chapter">0{step + 1} / {card.chapter}</span><DialogTitle className="story-title">{card.title}</DialogTitle><p className="story-subtitle" lang="zh-CN">{card.subtitle}</p></div>
+          <figure className="story-picture"><Image src={card.image} width={1536} height={1024} alt={card.alt} unoptimized loading="eager" /></figure>
+          <div className="story-copy"><DialogDescription>{card.body}</DialogDescription><p lang="zh-CN">{card.note}</p></div>
+          {card.details.length > 0 && <div className="story-recap">{card.details.map(detail => <div key={detail.title}><strong>{detail.title}</strong><span>{detail.body}</span><small lang="zh-CN">{detail.translation}</small></div>)}<p className="story-farewell">From here, let’s speak English.<span lang="zh-CN">这是你最后一次在本 App 看到中文了。</span></p></div>}
+        </article>
+      </div>
+      <footer className="story-footer" lang="en"><Button variant="ghost" disabled={step === 0} aria-label="Previous page" onClick={() => setStep(value => Math.max(0, value - 1))}><ArrowLeft aria-hidden="true"/><span>Back</span></Button><span className="story-pagination" role="status" aria-label={`Page ${step + 1} of ${ONBOARDING_CARDS.length}`}>0{step + 1}<span>/ 0{ONBOARDING_CARDS.length}</span></span><Button onClick={() => step === ONBOARDING_CARDS.length - 1 ? onComplete() : setStep(value => value + 1)}>{step === ONBOARDING_CARDS.length - 1 ? 'Let’s begin' : 'Next'}<ArrowRight aria-hidden="true"/></Button></footer>
+    </DialogContent>
+  </Dialog>;
 }
 function RecordButton({ controller: t, side, autoSpeakSide, detectSpeaker = true, compact = false, onBeforeRecord }: { controller: ReturnType<typeof useTranslator>; side: 0 | 1; autoSpeakSide?: 0 | 1; detectSpeaker?: boolean; compact?: boolean; onBeforeRecord: () => void }) {
   const [pressed, setPressed] = useState(false);
@@ -182,6 +198,7 @@ export default function Home() {
   const [ownName, setOwnName] = useState('Me'), [draftName, setDraftName] = useState('');
   const [ieltsScore, setIeltsScore] = useState<number>();
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [timeEntries, setTimeEntries] = useState<TimeEntry[]>([]), [timeLoading, setTimeLoading] = useState(false);
   const [currentPassword, setCurrentPassword] = useState(''), [nextPassword, setNextPassword] = useState('');
   const [editingId, setEditingId] = useState<number>();
   const [speechSpeed, setSpeechSpeed] = useState(1);
@@ -191,14 +208,17 @@ export default function Home() {
   const playedSpeech = useRef(0);
   const playedCoachSpeech = useRef(0);
   const speechRequest = useRef(0), speechAbort = useRef<AbortController | undefined>(undefined), speechAudio = useRef<HTMLAudioElement | undefined>(undefined), speechUrl = useRef('');
-  const { addUsage, mode: translatorMode, setError: reportError, stop: stopTranslator } = t;
+  const { addUsage, setError: reportError } = t;
   const activeAccountId = account?.status === 'active' ? account.id : '';
-  const chargeSummary = useCallback(async (seconds: number) => {
-    if (!activeAccountId || seconds <= 0) return;
-    const data = await accountRequest<{ account: AccountSnapshot }>('/api/account', { method: 'POST', body: JSON.stringify({ seconds, category: 'summary' }) });
-    setAccount(data.account);
-  }, [activeAccountId]);
-  const coach = useCoach('managed', t.addUsage, appMode === 'coach', ieltsScore, chargeSummary);
+  const coach = useCoach('managed', t.addUsage, ieltsScore);
+  useEffect(() => {
+    if (dialog !== 'usage' || !activeAccountId) return;
+    let cancelled = false; setTimeLoading(true); setFormError('');
+    void accountRequest<{ account: AccountSnapshot; ledger: TimeEntry[] }>('/api/account?ledger=1').then(data => {
+      if (!cancelled) { setTimeEntries(data.ledger); setAccount(data.account); }
+    }).catch(error => { if (!cancelled) setFormError(error instanceof Error ? error.message : '无法读取明细'); }).finally(() => { if (!cancelled) setTimeLoading(false); });
+    return () => { cancelled = true; };
+  }, [dialog, activeAccountId]);
   const locked = t.mode !== 'idle' || t.phase !== 'ready' || t.pending > 0;
   const panelEntries = useMemo(() => {
     const panels = [transcriptForLanguage(t.history, t.pair[0]), transcriptForLanguage(t.history, t.pair[1])] as Array<Array<{ id: number; text: string; speaker: 'self' | 'other'; pending?: boolean; provisional?: boolean }>>;
@@ -243,14 +263,11 @@ export default function Home() {
     return () => { cancelled = true; };
   }, [account]);
   useEffect(() => {
-    const category = appMode === 'coach' ? 'training' : appMode === 'translator' && translatorMode !== 'idle' ? 'translation' : null;
-    if (!activeAccountId || !category) return;
-    const timer = window.setInterval(() => {
-      void accountRequest<{ account: AccountSnapshot }>('/api/account', { method: 'POST', body: JSON.stringify({ seconds: 30, category }) })
-        .then(data => setAccount(data.account)).catch(error => { reportError(error instanceof Error ? error.message : '无法记录使用时间'); void stopTranslator(); });
-    }, 30000);
-    return () => window.clearInterval(timer);
-  }, [activeAccountId, appMode, translatorMode, reportError, stopTranslator]);
+    if (!activeAccountId) return;
+    let cancelled = false;
+    void accountRequest<{ account: AccountSnapshot }>('/api/account').then(data => { if (!cancelled) setAccount(data.account); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeAccountId, t.usageTotals.dayTokens, t.usageTotals.dayCost, coach.busy, t.pending]);
   const open = (name: NonNullable<typeof dialog>, side: 0 | 1 = 1) => {
     void t.stop(); t.setNeedsSettings(false); setDialogSide(side); setFormError('');
     if (name === 'name') setDraftName(ownName === 'Me' ? '' : ownName);
@@ -413,7 +430,7 @@ export default function Home() {
       {visibleDialog === 'settings' && <div className="settings-form">
         <div className="profile-setting"><span>{ownName}</span><Button type="button" variant="ghost" onClick={() => open('name')}>修改名字</Button></div>
         <div className="profile-setting profile-score"><span><GraduationCap />{ieltsScore ? `雅思 ${ieltsScore} 分` : '未设定雅思成绩'}</span><Button type="button" variant="ghost" onClick={() => open('ielts')}>设定雅思成绩</Button></div>
-        <div className="profile-setting"><span>{account.username} · {account.level.toUpperCase()}</span><strong>剩余 {duration(remaining)}</strong></div>
+        <div className="profile-setting"><span>{account.username} · {account.level.toUpperCase()}</span><strong>剩余 {duration(remaining)}</strong></div><Button variant="outline" onClick={() => open('usage')}>Time breakdown · 扣时明细</Button>
         <label className="field-label" htmlFor="layout-mode">页面布局</label>
         <Select value={layoutMode} onValueChange={value => { if (!value) return; const layout = value as LayoutMode; setLayoutMode(layout); try { localStorage.setItem('lucky-layout', layout); } catch {} }}><SelectTrigger id="layout-mode" className="app-input"><SelectValue>{layoutMode === 'face-to-face' ? '面对面 · 双方操作' : '单人 · Listening / Speaking'}</SelectValue></SelectTrigger><SelectContent><SelectItem value="face-to-face">面对面 · 双方操作</SelectItem><SelectItem value="single-operator">单人 · Listening / Speaking</SelectItem></SelectContent></Select>
         <label className="field-label" htmlFor="speech-speed">朗读语速</label>
@@ -426,7 +443,7 @@ export default function Home() {
         <label className="field-label" htmlFor="typed-text">想说的话</label><Textarea id="typed-text" className="app-input text-input" value={draftText} maxLength={2000} onChange={event => setDraftText(event.target.value)} placeholder="在这里输入…" />
         {formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={t.pending > 0}>翻译</Button>
       </form>}
-      {visibleDialog === 'usage' && <div className="usage-details">{usageRows.map(item => <article key={item.label}><span>{item.label}</span><strong>${(item.cost * account.costMultiplier).toFixed(2)}</strong><small>{item.tokens.toLocaleString()} tokens · 计费时间 {duration(item.seconds)} · 实际 ${item.cost.toFixed(4)}</small></article>)}<p>显示倍率 <strong>×{account.costMultiplier.toFixed(1)}</strong>。翻译和训练按 100% 计入；语音互动的 Token 额度按 2 倍计入；对话总结按对应对话时长的 10% 计入。</p></div>}
+      {visibleDialog === 'usage' && <div className="usage-details">{usageRows.map(item => <article key={item.label}><span>{item.label}</span><strong>${(item.cost * account.costMultiplier).toFixed(2)}</strong><small>{item.tokens.toLocaleString()} tokens · 计费时间 {duration(item.seconds)} · 实际 ${item.cost.toFixed(4)}</small></article>)}<p>显示倍率 <strong>×{account.costMultiplier.toFixed(1)}</strong>。翻译和训练按双方本次文字折算时长的 100% 计入；总结 10%；不受播放倍速影响。语音互动的 Token 额度按 2 倍计入。</p>{formError && <p role="alert">{formError}</p>}{timeLoading ? <p role="status">Loading time breakdown…</p> : <TimeLedger entries={timeEntries} />}</div>}
       {visibleDialog === 'edit' && <form className="edit-form" onSubmit={event => { event.preventDefault(); if (!draftText.trim() || editingId === undefined) { setFormError('这句话不能为空'); return; } if (t.retranslate(editingId, draftText.trim())) { setDialog(null); setEditingId(undefined); } }}>
         <label className="field-label" htmlFor="edited-text">当前这句话</label><Textarea id="edited-text" className="app-input edit-input" value={draftText} maxLength={2000} onChange={event => setDraftText(event.target.value)} dir="auto" lang={t.pair[dialogSide]} />
         {formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={t.pending > 0}>保存并重新翻译</Button>

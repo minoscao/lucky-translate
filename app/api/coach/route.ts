@@ -2,6 +2,8 @@ import { requireAccount } from '@/lib/server/auth';
 import { getCoachSkill } from '@/lib/server/config';
 import { deepSeekJson, DeepSeekMessage } from '@/lib/server/deepseek';
 import { json, readJson, sameOrigin } from '@/lib/server/http';
+import { coachTimeBasis, parseCoachContent } from '@/lib/text-time';
+import { chargeTextTime } from '@/lib/server/text-time';
 
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return json({ error: '请从 English Coach 页面发起请求' }, 403);
@@ -18,6 +20,10 @@ export async function POST(request: Request) {
       messages[0] = { role: 'system', content: await getCoachSkill() };
     }
     const result = await deepSeekJson(account, '英语训练', messages, request.signal, Math.max(200, Math.min(3000, Number(body.maxTokens) || 1800)), body.voiceMode === true ? 2 : 1);
-    return json({ content: result.content, usage: result.usage });
+    let parsed: Record<string, unknown>, basis: ReturnType<typeof coachTimeBasis>;
+    try { parsed = parseCoachContent(result.content); basis = coachTimeBasis(messages, parsed); }
+    catch { return json({ error: 'English Coach 返回内容不完整，请重试。本次未扣除对话时间。' }, 502); }
+    const time = await chargeTextTime(account, basis.category, basis.texts, basis.label, result.usage.eventId);
+    return json({ content: JSON.stringify(parsed), usage: { ...result.usage, time } });
   } catch (error) { return json({ error: error instanceof Error ? error.message : 'English Coach 暂时无法回应' }, (error as { status?: number }).status || 500); }
 }

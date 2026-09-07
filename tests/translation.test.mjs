@@ -113,11 +113,6 @@ test('managed service architecture keeps API keys on the server and uses the con
   assert.match(page, /lang\.startsWith\('zh'\) && 'speechSynthesis' in window/);
 });
 
-test('translation and coaching time are charged in full while summaries are charged at ten percent', async () => {
-  const account = await readFile(new URL('../lib/server/account.ts', import.meta.url), 'utf8');
-  assert.match(account, /category === 'summary' \? Math\.ceil\(safe \* \.1\) : safe/);
-  assert.match(account, /category === 'training' \? safe : 0/);
-});
 test('voice interactions use two times the customer Token allowance while preserving the actual model cost', async () => {
   const [account, translate, coach] = await Promise.all([
     readFile(new URL('../lib/server/account.ts', import.meta.url), 'utf8'),

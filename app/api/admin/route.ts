@@ -3,21 +3,22 @@ import { accountSnapshot } from '@/lib/server/account';
 import { Account, checkAdminPassword, checkSuperAdminPassword, clearAdminCookie, ensureBootstrap, hashPassword, isAdmin, isSuperAdmin, PLAN_DEFAULTS, requireAdmin } from '@/lib/server/auth';
 import { deepSeekConfigured, getCoachSkill, setCoachSkill, setDeepSeekKey } from '@/lib/server/config';
 import { json, readJson, sameOrigin } from '@/lib/server/http';
+import { getTextTimeRules, refundLegacyTime, setTextTimeRules, timeLedger } from '@/lib/server/text-time';
 
 async function dashboard(request?: Request, businessUnlocked?: boolean) {
   await ensureBootstrap();
   const rows = await getDb().prepare('SELECT * FROM users ORDER BY CASE status WHEN \'pending\' THEN 0 ELSE 1 END, created_at DESC').all<Account>();
-  const users = await Promise.all(rows.results.map(account => accountSnapshot(account).then(snapshot => ({ ...snapshot, adminNote: account.admin_note, createdAt: account.created_at, lastLoginAt: account.last_login_at }))));
+  const users = await Promise.all(rows.results.map(async account => ({ ...await accountSnapshot(account), timeLedger: await timeLedger(account.id), adminNote: account.admin_note, createdAt: account.created_at, lastLoginAt: account.last_login_at })));
   const prices = await getDb().prepare('SELECT provider, model, period, cache_hit_micros_per_million, input_micros_per_million, output_micros_per_million, effective_at FROM price_history WHERE retired_at IS NULL ORDER BY effective_at DESC, period').all();
   const history = await getDb().prepare(`SELECT e.id, e.feature, e.model, e.input_tokens, e.cached_tokens, e.output_tokens, e.total_tokens, e.cost_micros, e.price_snapshot, e.created_at, u.username
-    FROM usage_events e JOIN users u ON u.id = e.user_id ORDER BY e.created_at DESC LIMIT 200`).all();
+    FROM usage_events e JOIN users u ON u.id = e.user_id WHERE e.provider != 'membership' ORDER BY e.created_at DESC LIMIT 200`).all();
   const payments = await getDb().prepare(`SELECT p.id, p.user_id, p.amount_cents, p.currency, p.status, p.note, p.paid_at, p.created_at, u.username
     FROM payments p JOIN users u ON u.id = p.user_id ORDER BY p.paid_at DESC`).all();
   const multiplier = await getDb().prepare("SELECT value FROM app_config WHERE key = 'cost_multiplier'").first<{ value: string }>();
   return {
     users, prices: prices.results, history: history.results, payments: payments.results,
     deepseekConfigured: await deepSeekConfigured(), costMultiplier: Math.max(.1, Math.min(100, Number(multiplier?.value) || 1)),
-    coachSkill: await getCoachSkill(), businessUnlocked: businessUnlocked ?? (request ? await isSuperAdmin(request) : false),
+    coachSkill: await getCoachSkill(), timeRules: await getTextTimeRules(), businessUnlocked: businessUnlocked ?? (request ? await isSuperAdmin(request) : false),
   };
 }
 
@@ -36,6 +37,16 @@ export async function POST(request: Request) {
       return json({ authenticated: true, ...(await dashboard(request)) }, 200, { 'Set-Cookie': cookie });
     }
     await requireAdmin(request);
+    if (body.action === 'refund_legacy_time') {
+      const account = await getDb().prepare('SELECT * FROM users WHERE id=?1').bind(typeof body.userId === 'string' ? body.userId : '').first<Account>();
+      if (!account) return json({ error: '没有找到客户' }, 404);
+      await refundLegacyTime(account, typeof body.day === 'string' ? body.day : '');
+      return json({ authenticated: true, saved: true, ...(await dashboard(request)) });
+    }
+    if (body.action === 'set_text_time_rules') {
+      await setTextTimeRules(body.rules);
+      return json({ authenticated: true, saved: true, ...(await dashboard(request)) });
+    }
     if (body.action === 'set_deepseek_key') {
       await setDeepSeekKey(typeof body.key === 'string' ? body.key : '');
       return json({ authenticated: true, saved: true, ...(await dashboard(request)) });
