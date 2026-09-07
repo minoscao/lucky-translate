@@ -31,7 +31,7 @@ export function parseCoachContent(content: string): Record<string, unknown> {
 export function coachTimeBasis(messages: Array<{ role: string; content: string }>, response: Record<string, unknown>) {
   const system = messages[0]?.content || '', task = messages.at(-1)?.content || '';
   if (typeof response.reply === 'string') {
-    if (!response.reply.trim() || typeof response.tip !== 'string' || !response.memory || typeof response.memory !== 'object') throw new Error('对话回复不完整');
+    if (!response.reply.trim()) throw new Error('对话回复不完整');
     const previous = messages.slice(1, -1).filter(message => message.role === 'user');
     return { category: 'training' as const, texts: [previous.at(-1)?.content || '', response.reply], label: '英语对话' };
   }

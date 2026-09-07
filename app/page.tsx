@@ -14,6 +14,9 @@ import { INTERFACE_COPY } from '@/lib/interface-copy';
 import { useCoach } from '@/hooks/use-coach';
 import { useTranslator } from '@/hooks/use-translator';
 import { synthesizeSpeechDirect } from '@/lib/direct-api';
+import { validEmail, validUsername, validVerificationCode } from '@/lib/auth-inputs';
+import { formatPoints } from '@/lib/points';
+import { PLAN_DEFAULTS } from '@/lib/membership-plans';
 import { AccountSnapshot, accountRequest as publicAccountRequest } from '@/lib/account';
 import { createAccountScope, SESSION_CHANGED, SESSION_MARKER } from '@/lib/account-scope';
 import { TimeEntry, TimeLedger } from '@/components/time-ledger';
@@ -215,7 +218,10 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
   const account = initialAccount;
   const [settingsReturnMode, setSettingsReturnMode] = useState<AppMode | null>(null);
   const [coachEntryStage, setCoachEntryStage] = useState<'chat' | 'dashboard'>('chat');
-  const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot-password'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot-password' | 'verify-email'>('login');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [resendSeconds, setResendSeconds] = useState(0);
+  useEffect(() => { if (resendSeconds <= 0) return; const timer = window.setTimeout(() => setResendSeconds(value => Math.max(0, value - 1)), 1000); return () => window.clearTimeout(timer); }, [resendSeconds]);
   const [authEmail, setAuthEmail] = useState(''), [authUsername, setAuthUsername] = useState(''), [authPassword, setAuthPassword] = useState(''), [authError, setAuthError] = useState(loadError ? '暂时无法读取账户，请刷新后重试' : '');
   const [confirmPassword, setConfirmPassword] = useState(''), [authConfirmation, setAuthConfirmation] = useState(''), [authNotice, setAuthNotice] = useState(''), [passwordBusy, setPasswordBusy] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
@@ -382,19 +388,33 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
     } catch { setFormError('导出失败，请尝试复制全部内容'); }
   };
   const authenticate = async (event: React.SyntheticEvent<HTMLFormElement>) => {
-    event.preventDefault(); if (!authEmail.trim() || (authMode !== 'forgot-password' && !authPassword) || authBusy) return;
+    event.preventDefault(); if (authBusy) return;
     setAuthBusy(true); setAuthError('');
     try {
       setAuthNotice('');
+      if (!validEmail(authEmail.trim())) throw new Error('请输入有效的邮箱地址，仅支持邮箱登录');
+      if (authMode === 'verify-email' && !validVerificationCode(verificationCode)) throw new Error('请输入 6 位数字验证码');
+      if (authMode === 'register' && !validUsername(authUsername.trim())) throw new Error('昵称需为 2–24 个文字、数字、点、横线或下划线');
+      if (authMode === 'register' && (authPassword.length < 8 || authPassword.length > 128)) throw new Error('密码需要 8–128 位');
+      if (authMode === 'login' && (!authPassword || authPassword.length > 128)) throw new Error('请输入密码（最多 128 位）');
       if (authMode === 'forgot-password') {
         const result = await accountRequest<{message:string}>('/api/auth',{method:'POST',body:JSON.stringify({action:authMode,email:authEmail.trim()})});
         setAuthNotice(result.message); return;
       }
       if (authMode === 'register' && authPassword !== authConfirmation) throw new Error('两次输入的密码不一致');
-      const data = await accountRequest<{ account: AccountSnapshot }>('/api/auth', { method: 'POST', body: JSON.stringify({ action: authMode, email: authEmail.trim(), username: authUsername.trim(), password: authPassword, confirmPassword: authConfirmation }) });
-      setAccount(data.account); setAuthPassword('');
+      const data = await accountRequest<{ account?: AccountSnapshot; verificationRequired?: boolean }>('/api/auth', { method: 'POST', body: JSON.stringify({ action: authMode, code: verificationCode, email: authEmail.trim(), username: authUsername.trim(), password: authPassword, confirmPassword: authConfirmation }) });
+      if (data.verificationRequired) { setAuthMode('verify-email'); setVerificationCode(''); setResendSeconds(60); setAuthPassword(''); setAuthConfirmation(''); setAuthNotice('验证码已发送，10 分钟内有效，请同时检查垃圾邮件。'); return; }
+      if (!data.account) throw new Error('暂时无法登录，请重试');
+      setAccount(data.account); setAuthPassword(''); setAuthConfirmation(''); setVerificationCode('');
       window.localStorage.setItem(SESSION_MARKER, crypto.randomUUID());
     } catch (cause) { setAuthError(cause instanceof Error ? cause.message : '暂时无法登录'); }
+    finally { setAuthBusy(false); }
+  };
+  const resendCode = async () => {
+    if (authBusy || resendSeconds > 0) return;
+    setAuthBusy(true); setAuthError('');
+    try { const result = await accountRequest<{message:string}>('/api/auth', {method:'POST',body:JSON.stringify({action:'resend-verification',email:authEmail.trim()})}); setAuthNotice(result.message); setResendSeconds(60); }
+    catch (cause) { setAuthError(cause instanceof Error ? cause.message : '发送失败，请重试'); }
     finally { setAuthBusy(false); }
   };
   const logout = async () => {
@@ -414,7 +434,6 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
     { label: '本月', tokens: account.usage.monthTokens, cost: account.usage.monthCost, seconds: account.usage.monthSeconds },
     { label: '累计', tokens: account.usage.totalTokens, cost: account.usage.totalCost, seconds: account.usage.totalSeconds },
   ] : [];
-  const duration = (seconds: number) => seconds >= 3600 ? `${(seconds / 3600).toFixed(1)} 小时` : `${Math.round(seconds / 60)} 分钟`;
   const remaining = account ? account.limits.dailySeconds > 0 ? Math.max(0, account.limits.dailySeconds - account.usage.todaySeconds) : Math.max(0, account.limits.monthlySeconds - account.usage.monthSeconds) : 0;
   const selfSide = (t.selfOnTop ? 0 : 1) as 0 | 1, otherSide = (1 - selfSide) as 0 | 1;
   const panelOrder: Array<0 | 1> = layoutMode === 'single-operator' ? [otherSide, selfSide] : [0, 1];
@@ -424,23 +443,24 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
   if (account === null) return <main className="access-page"><section className="access-card">
     <div className="access-mark"><ShieldCheck /></div><h1>Lucky 同声翻译</h1>
     <div className="auth-tabs"><Button type="button" variant={authMode === 'login' ? 'secondary' : 'ghost'} onClick={() => { setAuthMode('login'); setAuthError(''); setAuthNotice(''); }}>登录</Button><Button type="button" variant={authMode === 'register' ? 'secondary' : 'ghost'} onClick={() => { setAuthMode('register'); setAuthError(''); setAuthNotice(''); }}>注册</Button></div>
-    <form onSubmit={authenticate}>
-      <label className="field-label" htmlFor="account-email">{authMode === 'login' ? '邮箱或用户名' : '邮箱'}</label>
-      <Input id="account-email" type={authMode === 'login' ? 'text' : 'email'} className="app-input" value={authEmail} onChange={event => setAuthEmail(event.target.value)} autoComplete={authMode === 'login' ? 'username' : 'email'} maxLength={254} />
-      {authMode === 'register' && <><label className="field-label" htmlFor="account-username">用户名</label><Input id="account-username" className="app-input" value={authUsername} onChange={event => setAuthUsername(event.target.value)} autoComplete="username" minLength={2} maxLength={24} /></>}
-      {authMode !== 'forgot-password' && <><label className="field-label" htmlFor="account-password">密码</label>
+    <form onSubmit={authenticate} noValidate>
+      <label className="field-label" htmlFor="account-email">邮箱</label>
+      <Input id="account-email" type="email" inputMode="email" required className="app-input" value={authEmail} onChange={event => setAuthEmail(event.target.value)} onBlur={() => { if (authEmail && !validEmail(authEmail.trim())) setAuthError('请输入有效的邮箱地址'); }} readOnly={authMode === 'verify-email'} disabled={authBusy} autoCapitalize="none" spellCheck={false} autoComplete="email" maxLength={254} />
+      {authMode === 'register' && <><label className="field-label" htmlFor="account-username">昵称</label><Input id="account-username" className="app-input" value={authUsername} onChange={event => setAuthUsername(event.target.value)} autoComplete="username" minLength={2} maxLength={24} /></>}
+      {(authMode === 'login' || authMode === 'register') && <><label className="field-label" htmlFor="account-password">密码</label>
       <Input id="account-password" type="password" className="app-input" value={authPassword} onChange={event => setAuthPassword(event.target.value)} autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} minLength={authMode === 'register' ? 8 : 1} maxLength={128} /></>}
       {authMode === 'register' && <><label className="field-label" htmlFor="account-confirm-password">再次输入密码</label><Input id="account-confirm-password" type="password" className="app-input" value={authConfirmation} onChange={event=>setAuthConfirmation(event.target.value)} autoComplete="new-password" minLength={8} maxLength={128} required /></>}
+      {authMode === 'verify-email' && <><label className="field-label" htmlFor="account-code">邮箱验证码</label><Input id="account-code" className="app-input" inputMode="numeric" autoComplete="one-time-code" value={verificationCode} onChange={event => setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))} maxLength={6} required /><Button type="button" variant="ghost" disabled={authBusy || resendSeconds > 0} onClick={() => void resendCode()}>{resendSeconds > 0 ? `${resendSeconds} 秒后可重新发送` : '重新发送验证码'}</Button></>}
       {authNotice && <p role="status">{authNotice}</p>}
-      {authMode === 'register' && <p className="field-note">注册即获得 Lv1，每天免费体验 10 分钟。</p>}
+      {authMode === 'register' && <p className="field-note">邮箱验证通过后开通 Lv1，每天获得 {formatPoints(PLAN_DEFAULTS.lv1.dailySeconds)}。</p>}
       {authError && <p role="alert" className="form-error">{authError}</p>}
-      <Button type="submit" className="form-submit" disabled={!authEmail.trim() || (authMode !== 'forgot-password' && !authPassword) || (authMode === 'register' && (authUsername.trim().length < 2 || authPassword.length < 8)) || authBusy}>{authBusy ? <><LoaderCircle className="spinning" />正在提交</> : authMode === 'login' ? '登录' : authMode === 'register' ? '注册并开始使用' : '发送重设邮件'}</Button>
+      <Button type="submit" className="form-submit" disabled={authBusy}>{authBusy ? <><LoaderCircle className="spinning" />正在提交</> : authMode === 'login' ? '登录' : authMode === 'register' ? '发送验证码' : authMode === 'verify-email' ? '验证并开始使用' : '发送重设邮件'}</Button>
       {authMode === 'login' && <Button type="button" variant="ghost" onClick={()=>{setAuthMode('forgot-password');setAuthError('');setAuthNotice('');}}>忘记密码？</Button>}
     </form>
   </section></main>;
   if (account.status !== 'active') return <main className="access-page"><section className="access-card member-pending"><div className="access-mark"><ShieldCheck /></div><h1>{account.status === 'pending' ? '注册申请已提交' : account.status === 'expired' ? '会员已到期' : '账户已暂停'}</h1><p>{account.status === 'pending' ? '管理员激活会员后即可开始使用。' : '请联系管理员恢复账户。'}</p><strong>{account.email || account.username}</strong><Button className="form-submit" onClick={() => void accountRequest<{ account: AccountSnapshot | null }>('/api/auth').then(data => setAccount(data.account))}>刷新状态</Button><Button variant="ghost" onClick={() => void logout()}><LogOut />退出账户</Button></section></main>;
   if (!t.ready || !coach.ready) return <main className="access-page"><section className="access-card"><LoaderCircle className="spinning" /><p>{t.error || coach.error || 'Loading your conversations…'}</p>{(t.error || coach.error) && <Button onClick={() => window.location.reload()}>Retry</Button>}</section></main>;
-  if (appMode === null) return <main className="mode-page"><section className="mode-card">{showOnboarding && <Onboarding onComplete={completeOnboarding}/>}<Image className="lucky-cat" src="/lucky-cat.webp" width={128} height={128} alt="Lucky cat" unoptimized /><p className="mode-brand">LUCKY</p><h1>What would you like to do?</h1><div className="member-summary"><span>{account.username} · {account.level.toUpperCase()}</span><strong>剩余 {duration(remaining)}</strong><small>云空间 {(account.storage.bytes / 1024 / 1024).toFixed(1)} / {(account.storage.limitBytes / 1024 / 1024).toFixed(0)} MB · 云端保留 {account.storage.retentionMonths} 个月</small></div>{account.storage.warning && <button className="storage-warning" onClick={() => { setAppMode('translator'); queueMicrotask(() => open('history')); }}>云空间接近上限，请导出对话</button>}<div className="mode-options"><Button onClick={() => { setCoachEntryStage('chat'); setAppMode('coach'); if (coach.history.length === 0 && !coach.busy) void coach.beginSession(); }}><strong>English Coach</strong><span>Have a natural conversation and practise afterwards</span></Button><Button variant="outline" onClick={() => setAppMode('translator')}><strong>Translator</strong><span>Translate a live conversation in both directions</span></Button></div><div className="mode-account-actions"><Button variant="ghost" className="mode-settings" onClick={() => { setSettingsReturnMode(null); setAppMode('translator'); queueMicrotask(() => open('settings')); }}><Settings2 />设置</Button><Button variant="ghost" className="mode-settings" onClick={() => void logout()}><LogOut />退出</Button></div></section></main>;
+  if (appMode === null) return <main className="mode-page"><section className="mode-card">{showOnboarding && <Onboarding onComplete={completeOnboarding}/>}<Image className="lucky-cat" src="/lucky-cat.webp" width={128} height={128} alt="Lucky cat" unoptimized /><p className="mode-brand">LUCKY</p><h1>What would you like to do?</h1><div className="member-summary"><span>{account.username} · {account.level.toUpperCase()}</span><strong>剩余 {formatPoints(remaining)}</strong><small>云空间 {(account.storage.bytes / 1024 / 1024).toFixed(1)} / {(account.storage.limitBytes / 1024 / 1024).toFixed(0)} MB · 云端保留 {account.storage.retentionMonths} 个月</small></div>{account.storage.warning && <button className="storage-warning" onClick={() => { setAppMode('translator'); queueMicrotask(() => open('history')); }}>云空间接近上限，请导出对话</button>}<div className="mode-options"><Button onClick={() => { setCoachEntryStage('chat'); setAppMode('coach'); if (coach.history.length === 0 && !coach.busy) void coach.beginSession(); }}><strong>English Coach</strong><span>Have a natural conversation and practise afterwards</span></Button><Button variant="outline" onClick={() => setAppMode('translator')}><strong>Translator</strong><span>Translate a live conversation in both directions</span></Button></div><div className="mode-account-actions"><Button variant="ghost" className="mode-settings" onClick={() => { setSettingsReturnMode(null); setAppMode('translator'); queueMicrotask(() => open('settings')); }}><Settings2 />设置</Button><Button variant="ghost" className="mode-settings" onClick={() => void logout()}><LogOut />退出</Button></div></section></main>;
   if (appMode === 'coach') return <CoachMode coach={coach} speaking={speaking} ieltsScore={ieltsScore} initialStage={coachEntryStage} onBack={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('chat'); setAppMode(null); }} onSettings={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('settings')); }} onIelts={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('ielts')); }} onSecurity={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('password')); }} onLogout={() => void logout()} onHowItWorks={() => { stopSpeech(); void coach.stopRecording(); setAppMode(null); queueMicrotask(() => setShowOnboarding(true)); }} onSpeak={text => void playSpeech(text, 'en')} />;
   return <main className="translator"><div className={`app-frame ${layoutMode === 'single-operator' ? 'single-operator' : ''}`}>
     {panelOrder.map((side, index) => <LanguagePanel key={side} controller={t} onHistory={() => open('history')} totals={{ ...t.usageTotals, dayCost: account.usage.todayCost, dayTokens: account.usage.todayTokens, monthCost: account.usage.monthCost, monthTokens: account.usage.monthTokens }} multiplier={account.costMultiplier} side={side} visualRow={layoutMode === 'single-operator' ? index + 1 : side === 0 ? 1 : 3} isSelf={side === selfSide} facingAway={layoutMode === 'face-to-face' && side === 0} showRecord={layoutMode === 'face-to-face'} ownName={ownName} pair={t.pair} entries={panelEntries[side]} locked={locked} canSpeak={true} onLanguage={t.changePair} onEdit={(id, text) => editSentence(side, id, text)} onSpeak={text => void playSpeech(text, t.pair[side])} onBeforeRecord={stopSpeech} onUsage={() => open('usage', side)} />)}
@@ -476,12 +496,12 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
       {visibleDialog === 'settings' && <div className="settings-form">
         <div className="profile-setting"><span>{ownName}</span><Button type="button" variant="ghost" onClick={() => open('name')}>修改名字</Button></div>
         <div className="profile-setting profile-score"><span><GraduationCap />{ieltsScore ? `雅思 ${ieltsScore} 分` : '未设定雅思成绩'}</span><Button type="button" variant="ghost" onClick={() => open('ielts')}>设定雅思成绩</Button></div>
-        <div className="profile-setting"><span>{account.username} · {account.level.toUpperCase()}</span><strong>剩余 {duration(remaining)}</strong></div><Button variant="outline" onClick={() => open('usage')}>Time breakdown · 扣时明细</Button>
+        <div className="profile-setting"><span>{account.username} · {account.level.toUpperCase()}</span><strong>剩余 {formatPoints(remaining)}</strong></div><Button variant="outline" onClick={() => open('usage')}>Points breakdown · 积分明细</Button>
         <label className="field-label" htmlFor="layout-mode">页面布局</label>
         <Select value={layoutMode} onValueChange={value => { if (!value) return; const layout = value as LayoutMode; setLayoutMode(layout); try { localStorage.setItem('lucky-layout', layout); } catch {} }}><SelectTrigger id="layout-mode" className="app-input"><SelectValue>{layoutMode === 'face-to-face' ? '面对面 · 双方操作' : '单人 · Listening / Speaking'}</SelectValue></SelectTrigger><SelectContent><SelectItem value="face-to-face">面对面 · 双方操作</SelectItem><SelectItem value="single-operator">单人 · Listening / Speaking</SelectItem></SelectContent></Select>
         <label className="field-label" htmlFor="speech-speed">朗读语速</label>
         <Select value={String(speechSpeed)} onValueChange={value => { if (!value) return; const speed = Number(value); setSpeechSpeed(speed); try { localStorage.setItem('lucky-speech-speed', value); } catch {} }}><SelectTrigger id="speech-speed" className="app-input"><SelectValue>{speechSpeed}×</SelectValue></SelectTrigger><SelectContent>{[.75, 1, 1.5, 2].map(speed => <SelectItem key={speed} value={String(speed)}>{speed}×</SelectItem>)}</SelectContent></Select>
-        <details className="inline-help"><summary>会员计时规则<ChevronDown /></summary><p>翻译和 English Coach 都按实际使用时间的 100% 计入额度。生成对话总结时，只按尚未总结的对话时长的 10% 计入；例如 1 小时对话的总结计 6 分钟。语音互动的 Token 额度按 2 倍计入；导出不额外扣时间。</p></details>
+        <details className="inline-help"><summary>Points 使用规则<ChevronDown /></summary><p>翻译和 English Coach 按本次对话的文字量扣除 Points；总结按对应对话的 10% 计算。空闲、等待和失败回复不扣 Points，播放倍速不影响扣费。语音互动的 Token 额度按 2 倍计入；导出不额外扣 Points。</p></details>
         <div className="account-storage"><span>个人云空间</span><strong>{(account.storage.bytes / 1024 / 1024).toFixed(1)} / {(account.storage.limitBytes / 1024 / 1024).toFixed(0)} MB</strong></div>
         <Button type="button" variant="ghost" className="clear-key" onClick={() => void logout()}><LogOut />退出账户</Button>
       </div>}
@@ -489,7 +509,7 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
         <label className="field-label" htmlFor="typed-text">想说的话</label><Textarea id="typed-text" className="app-input text-input" value={draftText} maxLength={2000} onChange={event => setDraftText(event.target.value)} placeholder="在这里输入…" />
         {formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={t.pending > 0}>翻译</Button>
       </form>}
-      {visibleDialog === 'usage' && <div className="usage-details">{usageRows.map(item => <article key={item.label}><span>{item.label}</span><strong>${(item.cost * account.costMultiplier).toFixed(2)}</strong><small>{item.tokens.toLocaleString()} tokens · 计费时间 {duration(item.seconds)} · 实际 ${item.cost.toFixed(4)}</small></article>)}<p>显示倍率 <strong>×{account.costMultiplier.toFixed(1)}</strong>。翻译和训练按双方本次文字折算时长的 100% 计入；总结 10%；不受播放倍速影响。语音互动的 Token 额度按 2 倍计入。</p>{formError && <p role="alert">{formError}</p>}{timeLoading ? <p role="status">Loading time breakdown…</p> : <TimeLedger entries={timeEntries} />}</div>}
+      {visibleDialog === 'usage' && <div className="usage-details">{usageRows.map(item => <article key={item.label}><span>{item.label}</span><strong>${(item.cost * account.costMultiplier).toFixed(2)}</strong><small>{item.tokens.toLocaleString()} tokens · 已用 {formatPoints(item.seconds)} · 实际 ${item.cost.toFixed(4)}</small></article>)}<p>显示倍率 <strong>×{account.costMultiplier.toFixed(1)}</strong>。翻译和训练按双方本次对话的文字量扣除 Points；总结按 10% 计算；不受播放倍速影响。语音互动的 Token 额度按 2 倍计入。</p>{formError && <p role="alert">{formError}</p>}{timeLoading ? <p role="status">Loading points breakdown…</p> : <TimeLedger entries={timeEntries} unit="points" />}</div>}
       {visibleDialog === 'edit' && <form className="edit-form" onSubmit={event => { event.preventDefault(); if (!draftText.trim() || editingId === undefined) { setFormError('这句话不能为空'); return; } if (t.retranslate(editingId, draftText.trim())) { setDialog(null); setEditingId(undefined); } }}>
         <label className="field-label" htmlFor="edited-text">当前这句话</label><Textarea id="edited-text" className="app-input edit-input" value={draftText} maxLength={2000} onChange={event => setDraftText(event.target.value)} dir="auto" lang={t.pair[dialogSide]} />
         {formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={t.pending > 0}>保存并重新翻译</Button>

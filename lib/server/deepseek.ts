@@ -20,5 +20,6 @@ export async function deepSeekJson(account: Account, feature: string, messages: 
   const content = result.choices?.[0]?.message?.content;
   if (!content) throw Object.assign(new Error('没有收到完整内容，请重试'), { status: 502 });
   const usage = await recordDeepSeekUsage(account, feature, result.usage, tokenMultiplier);
+  if (result.choices?.[0]?.finish_reason === 'length') throw Object.assign(new Error('回复未生成完整，请重试。本次未扣除对话 Points。'), { status: 502 });
   return { content, usage };
 }

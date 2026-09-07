@@ -43,6 +43,11 @@ test('switching A to an empty B resets coach memory and ignores A reply completi
     assert.equal(writes.some(write=>write.owner==='B'),false);
     assert.equal(JSON.parse(storage.get(scopeModule.cacheKey('B','lucky-coach-state'))).history.length,0);
     assert.ok(storage.get('lucky-coach-state').includes('unowned old text'));
+    globalThis.__coachReply=async()=>({data:{reply:'I am here.'},usage:{tokens:5,cost:0}});
+    await act(async()=>{await current.sendText('Hello Lucky');});
+    assert.equal(current.history.at(-1).text,'I am here.');
+    assert.equal(current.error,'');
+    assert.deepEqual(current.memory.topics,[]);
   }finally{
     if(renderer)await act(async()=>renderer.unmount());globalThis.fetch=oldFetch;delete globalThis.localStorage;delete globalThis.__coachReply;
   }

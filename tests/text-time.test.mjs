@@ -58,9 +58,11 @@ test('coach endpoint charges validated content only; empty, malformed and failed
       globalThis.__coachBillingTest.content=content;
       assert.equal((await POST(request())).status,502);
     }
+    globalThis.__coachBillingTest.content=JSON.stringify({reply:'A complete reply without optional metadata'});
+    assert.equal((await POST(request())).status,200);
     globalThis.__coachBillingTest.fail=true;
     assert.equal((await POST(request())).status,500);
-    assert.equal(globalThis.__coachBillingTest.calls.length,1);
+    assert.equal(globalThis.__coachBillingTest.calls.length,2);
   } finally { delete globalThis.__coachBillingTest; }
 });
 

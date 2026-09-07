@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     const result = await deepSeekJson(account, '英语训练', messages, request.signal, Math.max(200, Math.min(3000, Number(body.maxTokens) || 1800)), body.voiceMode === true ? 2 : 1);
     let parsed: Record<string, unknown>, basis: ReturnType<typeof coachTimeBasis>;
     try { parsed = parseCoachContent(result.content); basis = coachTimeBasis(messages, parsed); }
-    catch { return json({ error: 'English Coach 返回内容不完整，请重试。本次未扣除对话时间。' }, 502); }
+    catch { console.warn('Coach response validation failed', { characters: result.content.length }); return json({ error: 'Lucky 的回复未完整生成，请重试。本次未扣除对话 Points。' }, 502); }
     const time = await chargeTextTime(account, basis.category, basis.texts, basis.label, result.usage.eventId);
     return json({ content: JSON.stringify(parsed), usage: { ...result.usage, time } });
   } catch (error) { return json({ error: error instanceof Error ? error.message : 'English Coach 暂时无法回应' }, (error as { status?: number }).status || 500); }

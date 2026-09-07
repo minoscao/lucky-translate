@@ -59,16 +59,15 @@ test('admin creation requires same origin and administrator access without issui
   } finally { delete globalThis.__adminCreate; }
 });
 
-test('public registration always grants active Lv1 ten-minute trial, ignoring client-supplied privileges', async () => {
+test('public registration requires verification and rejects username login', async () => {
   const source=strip(await read('../app/api/auth/route.ts'));
-  globalThis.__registration=[];
-  const mocks=`const sameOrigin=()=>true,ensureBootstrap=async()=>{},limitAuth=async()=>{},validateNewPassword=(a,b)=>{if(a!==b)throw Object.assign(new Error('mismatch'),{status:400})};
+  const inputs=await read('../lib/auth-inputs.ts');
+  const mocks=`const sameOrigin=()=>true,ensureBootstrap=async()=>{},limitAuth=async()=>{};
     const readJson=r=>r.json(),json=(body,status=200,headers={})=>Response.json(body,{status,headers});
-    const createAccount=async(body,membership)=>globalThis.__registration.push(membership);
-    const findAccountByLogin=async()=>({id:'new',level:'lv1',status:'active',dailySeconds:600}),accountSnapshot=async a=>a,createSession=async()=> 'session=test; HttpOnly';`;
-  const {POST}=await import(compile(mocks+source));
-  try {
-    const result=await POST(new Request('https://example.test/api/auth',{method:'POST',body:JSON.stringify({action:'register',email:'new@example.test',username:'New',password:'LocalTest123',confirmPassword:'LocalTest123',level:'lv3',dailySeconds:86400})}));
-    assert.equal(result.status,201);assert.deepEqual(globalThis.__registration,[{level:'lv1',status:'active'}]);assert.equal((await result.json()).account.dailySeconds,600);
-  } finally {delete globalThis.__registration;}
+    const beginRegistration=async()=>({verificationRequired:true}),createSession=async()=>{throw new Error('must not issue session');};`;
+  const {POST}=await import(compile(inputs+mocks+source));
+  const req=body=>new Request('https://example.test/api/auth',{method:'POST',body:JSON.stringify(body)});
+  const response=await POST(req({action:'register',email:'new@example.test',username:'New',password:'LocalTest123',confirmPassword:'LocalTest123',level:'lv3'}));
+  assert.equal(response.status,202);assert.equal(response.headers.get('set-cookie'),null);assert.equal((await response.json()).verificationRequired,true);
+  for(const email of ['username','bad@','a b@example.com','a@-example.com','a..b@example.com'])assert.equal((await POST(req({action:'login',email,password:'LocalTest123'}))).status,400);
 });

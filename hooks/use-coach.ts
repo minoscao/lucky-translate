@@ -94,8 +94,10 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
       const result = await coachReplyDirect({ key: keyRef.current, history: messages, memory: nextMemory, turnStatus, newSession, voiceMode: true, signal: controller.signal });
       if (controller.signal.aborted || !scope.active) return false;
       const reply = result.data.reply.trim(); if (!reply) throw new Error('English Coach 没有返回回复');
-      const updatedMemory = cleanMemory(result.data.memory), updated = [...messages, { id: (messageId.current = Math.max(Date.now() * 1000 + Math.floor(Math.random() * 1000), messageId.current + 1)), createdAt: Date.now(), role: 'coach' as const, text: reply }];
-      updateHistory(updated); updateMemory(updatedMemory); setTip(result.data.tip.trim()); saveSession(updated, updatedMemory); applyUsage(result.usage);
+      const responseMemory = result.data.memory;
+      const updatedMemory = responseMemory && typeof responseMemory === 'object' && !Array.isArray(responseMemory) ? cleanMemory({ ...nextMemory, ...Object.fromEntries(Object.entries(responseMemory).filter(([key, value]) => key === 'level' ? typeof value === 'string' : ['topics', 'strengths', 'focus', 'phrases'].includes(key) && Array.isArray(value))) }) : nextMemory;
+      const updated = [...messages, { id: (messageId.current = Math.max(Date.now() * 1000 + Math.floor(Math.random() * 1000), messageId.current + 1)), createdAt: Date.now(), role: 'coach' as const, text: reply }];
+      updateHistory(updated); updateMemory(updatedMemory); setTip(typeof result.data.tip === 'string' ? result.data.tip.trim() : ''); saveSession(updated, updatedMemory); applyUsage(result.usage);
       setSpeechRequest({ id: ++speechId.current, text: reply }); return true;
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'English Coach 暂时无法回应'); return false; }
     finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }

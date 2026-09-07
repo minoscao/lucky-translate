@@ -100,3 +100,8 @@ export const passwordResets = sqliteTable('password_resets', {
 export const adminSessions = sqliteTable('admin_sessions', {
   tokenHash: text('token_hash').primaryKey(), role: text('role').notNull(), expiresAt: integer('expires_at').notNull(),
 });
+
+export const pendingRegistrations = sqliteTable('pending_registrations', {
+  email: text('email').primaryKey(), username: text('username').notNull(), passwordHash: text('password_hash').notNull(),
+  codeHash: text('code_hash').notNull(), expiresAt: integer('expires_at').notNull(), attempts: integer('attempts').notNull(), sentAt: integer('sent_at').notNull(),
+});

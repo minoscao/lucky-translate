@@ -69,7 +69,7 @@ export async function ensureBootstrap() {
 
 export async function findAccountByLogin(identifier: string) {
   await ensureBootstrap();
-  return getDb().prepare(`SELECT * FROM users WHERE lower(username) = ?1 OR lower(email) = ?1 LIMIT 1`).bind(identifier.trim().toLowerCase()).first<Account>();
+  return getDb().prepare(`SELECT * FROM users WHERE lower(email) = ?1 LIMIT 1`).bind(identifier.trim().toLowerCase()).first<Account>();
 }
 
 export async function getAccount(request: Request) {

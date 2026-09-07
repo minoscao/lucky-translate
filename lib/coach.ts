@@ -48,7 +48,7 @@ async function coachRequest<T>(_key: string, messages: Array<{ role: 'system' | 
   try {
     response = await fetch('/api/coach', {
       method: 'POST', credentials: 'same-origin', signal, headers: { 'Content-Type': 'application/json', 'X-Lucky-Account': _key },
-      body: JSON.stringify({ messages, maxTokens: 1800, voiceMode }),
+      body: JSON.stringify({ messages: messages.map((message, index) => index === 0 ? { ...message, content: `${message.content}\n\nRequired JSON response schema: ${JSON.stringify(_schema)}` } : message), maxTokens: 1800, voiceMode }),
     });
   } catch { throw new Error('无法连接 English Coach，请检查网络'); }
   if (!response.ok) {
