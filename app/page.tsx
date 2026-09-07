@@ -1,5 +1,6 @@
 'use client';
 
+import { PasswordFields } from '@/components/password-fields';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import { ArrowDownUp, ArrowLeft, ArrowRight, ArrowUpFromLine, Check, ChevronDown, ChevronUp, CircleHelp, Copy, Download, GraduationCap, History, LoaderCircle, LockKeyhole, LogOut, Mic, Settings2, ShieldCheck, Square, Volume2, X } from 'lucide-react';
@@ -186,8 +187,9 @@ export default function Home() {
   const [account, setAccount] = useState<AccountSnapshot | null>();
   const [settingsReturnMode, setSettingsReturnMode] = useState<AppMode | null>(null);
   const [coachEntryStage, setCoachEntryStage] = useState<'chat' | 'dashboard'>('chat');
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot-password'>('login');
   const [authEmail, setAuthEmail] = useState(''), [authUsername, setAuthUsername] = useState(''), [authPassword, setAuthPassword] = useState(''), [authError, setAuthError] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState(''), [authConfirmation, setAuthConfirmation] = useState(''), [authNotice, setAuthNotice] = useState(''), [passwordBusy, setPasswordBusy] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [dialog, setDialog] = useState<'settings' | 'help' | 'history' | 'text' | 'edit' | 'name' | 'ielts' | 'password' | 'usage' | null>(null);
   const [dialogSide, setDialogSide] = useState<0 | 1>(1);
@@ -271,7 +273,7 @@ export default function Home() {
   const open = (name: NonNullable<typeof dialog>, side: 0 | 1 = 1) => {
     void t.stop(); t.setNeedsSettings(false); setDialogSide(side); setFormError('');
     if (name === 'name') setDraftName(ownName === 'Me' ? '' : ownName);
-    if (name === 'password') { setCurrentPassword(''); setNextPassword(''); }
+    if (name === 'password') { setCurrentPassword(''); setNextPassword(''); setConfirmPassword(''); }
     setDialog(name);
   };
   const closeDialog = () => { setDialog(null); if (settingsReturnMode) { setAppMode(settingsReturnMode); setSettingsReturnMode(null); } };
@@ -287,9 +289,13 @@ export default function Home() {
   const saveIeltsScore = (score: number) => { saveProfile({ name: ownName, ieltsScore: score }); closeDialog(); };
   const completeOnboarding = () => { saveProfile({ name: ownName, ieltsScore, onboardingSeen: true }); setShowOnboarding(false); };
   const changePassword = async () => {
+    if (passwordBusy) return;
     setFormError('');
-    try { await accountRequest('/api/auth', { method: 'POST', body: JSON.stringify({ action: 'change-password', currentPassword, nextPassword }) }); closeDialog(); }
+    if (nextPassword !== confirmPassword) { setFormError('两次输入的新密码不一致'); return; }
+    setPasswordBusy(true);
+    try { await accountRequest('/api/auth', { method: 'POST', body: JSON.stringify({ action: 'change-password', currentPassword, nextPassword, confirmPassword }) }); closeDialog(); }
     catch (error) { setFormError(error instanceof Error ? error.message : '暂时无法修改密码'); }
+    finally { setPasswordBusy(false); }
   };
   const editSentence = (side: 0 | 1, id: number, text: string) => { setEditingId(id); setDraftText(text); open('edit', side); };
   const stopSpeech = useCallback(() => {
@@ -349,10 +355,16 @@ export default function Home() {
     } catch { setFormError('导出失败，请尝试复制全部内容'); }
   };
   const authenticate = async (event: React.SyntheticEvent<HTMLFormElement>) => {
-    event.preventDefault(); if (!authEmail.trim() || !authPassword || authBusy) return;
+    event.preventDefault(); if (!authEmail.trim() || (authMode !== 'forgot-password' && !authPassword) || authBusy) return;
     setAuthBusy(true); setAuthError('');
     try {
-      const data = await accountRequest<{ account: AccountSnapshot }>('/api/auth', { method: 'POST', body: JSON.stringify({ action: authMode, email: authEmail.trim(), username: authUsername.trim(), password: authPassword }) });
+      setAuthNotice('');
+      if (authMode === 'forgot-password') {
+        const result = await accountRequest<{message:string}>('/api/auth',{method:'POST',body:JSON.stringify({action:authMode,email:authEmail.trim()})});
+        setAuthNotice(result.message); return;
+      }
+      if (authMode === 'register' && authPassword !== authConfirmation) throw new Error('两次输入的密码不一致');
+      const data = await accountRequest<{ account: AccountSnapshot }>('/api/auth', { method: 'POST', body: JSON.stringify({ action: authMode, email: authEmail.trim(), username: authUsername.trim(), password: authPassword, confirmPassword: authConfirmation }) });
       setAccount(data.account); setAuthPassword('');
     } catch (cause) { setAuthError(cause instanceof Error ? cause.message : '暂时无法登录'); }
     finally { setAuthBusy(false); }
@@ -381,16 +393,19 @@ export default function Home() {
   </section></main>;
   if (account === null) return <main className="access-page"><section className="access-card">
     <div className="access-mark"><ShieldCheck /></div><h1>Lucky 同声翻译</h1>
-    <div className="auth-tabs"><Button type="button" variant={authMode === 'login' ? 'secondary' : 'ghost'} onClick={() => { setAuthMode('login'); setAuthError(''); }}>登录</Button><Button type="button" variant={authMode === 'register' ? 'secondary' : 'ghost'} onClick={() => { setAuthMode('register'); setAuthError(''); }}>申请注册</Button></div>
+    <div className="auth-tabs"><Button type="button" variant={authMode === 'login' ? 'secondary' : 'ghost'} onClick={() => { setAuthMode('login'); setAuthError(''); setAuthNotice(''); }}>登录</Button><Button type="button" variant={authMode === 'register' ? 'secondary' : 'ghost'} onClick={() => { setAuthMode('register'); setAuthError(''); setAuthNotice(''); }}>注册</Button></div>
     <form onSubmit={authenticate}>
       <label className="field-label" htmlFor="account-email">{authMode === 'login' ? '邮箱或用户名' : '邮箱'}</label>
-      <Input id="account-email" type={authMode === 'register' ? 'email' : 'text'} className="app-input" value={authEmail} onChange={event => setAuthEmail(event.target.value)} autoComplete={authMode === 'login' ? 'username' : 'email'} maxLength={254} />
+      <Input id="account-email" type={authMode === 'login' ? 'text' : 'email'} className="app-input" value={authEmail} onChange={event => setAuthEmail(event.target.value)} autoComplete={authMode === 'login' ? 'username' : 'email'} maxLength={254} />
       {authMode === 'register' && <><label className="field-label" htmlFor="account-username">用户名</label><Input id="account-username" className="app-input" value={authUsername} onChange={event => setAuthUsername(event.target.value)} autoComplete="username" minLength={2} maxLength={24} /></>}
-      <label className="field-label" htmlFor="account-password">密码</label>
-      <Input id="account-password" type="password" className="app-input" value={authPassword} onChange={event => setAuthPassword(event.target.value)} autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} minLength={authMode === 'register' ? 8 : 1} maxLength={128} />
-      {authMode === 'register' && <p className="field-note">提交后等待管理员激活会员等级。</p>}
+      {authMode !== 'forgot-password' && <><label className="field-label" htmlFor="account-password">密码</label>
+      <Input id="account-password" type="password" className="app-input" value={authPassword} onChange={event => setAuthPassword(event.target.value)} autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} minLength={authMode === 'register' ? 8 : 1} maxLength={128} /></>}
+      {authMode === 'register' && <><label className="field-label" htmlFor="account-confirm-password">再次输入密码</label><Input id="account-confirm-password" type="password" className="app-input" value={authConfirmation} onChange={event=>setAuthConfirmation(event.target.value)} autoComplete="new-password" minLength={8} maxLength={128} required /></>}
+      {authNotice && <p role="status">{authNotice}</p>}
+      {authMode === 'register' && <p className="field-note">注册即获得 Lv1，每天免费体验 10 分钟。</p>}
       {authError && <p role="alert" className="form-error">{authError}</p>}
-      <Button type="submit" className="form-submit" disabled={!authEmail.trim() || !authPassword || (authMode === 'register' && (authUsername.trim().length < 2 || authPassword.length < 8)) || authBusy}>{authBusy ? <><LoaderCircle className="spinning" />正在提交</> : authMode === 'login' ? '登录' : '提交注册申请'}</Button>
+      <Button type="submit" className="form-submit" disabled={!authEmail.trim() || (authMode !== 'forgot-password' && !authPassword) || (authMode === 'register' && (authUsername.trim().length < 2 || authPassword.length < 8)) || authBusy}>{authBusy ? <><LoaderCircle className="spinning" />正在提交</> : authMode === 'login' ? '登录' : authMode === 'register' ? '注册并开始使用' : '发送重设邮件'}</Button>
+      {authMode === 'login' && <Button type="button" variant="ghost" onClick={()=>{setAuthMode('forgot-password');setAuthError('');setAuthNotice('');}}>忘记密码？</Button>}
     </form>
   </section></main>;
   if (account.status !== 'active') return <main className="access-page"><section className="access-card member-pending"><div className="access-mark"><ShieldCheck /></div><h1>{account.status === 'pending' ? '注册申请已提交' : account.status === 'expired' ? '会员已到期' : '账户已暂停'}</h1><p>{account.status === 'pending' ? '管理员激活会员后即可开始使用。' : '请联系管理员恢复账户。'}</p><strong>{account.email || account.username}</strong><Button className="form-submit" onClick={() => void accountRequest<{ account: AccountSnapshot | null }>('/api/auth').then(data => setAccount(data.account))}>刷新状态</Button><Button variant="ghost" onClick={() => void logout()}><LogOut />退出账户</Button></section></main>;
@@ -426,7 +441,7 @@ export default function Home() {
           <strong><span>IELTS {band.score}</span>{ieltsScore === band.score && <Check aria-label="当前选择" />}</strong><span>{band.cn}</span><small lang="en">{band.en}</small>
         </button>)}
       </section>}
-      {visibleDialog === 'password' && <form onSubmit={event => { event.preventDefault(); void changePassword(); }}><label className="field-label" htmlFor="current-password">当前密码</label><Input id="current-password" className="app-input" type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} autoComplete="current-password" /><label className="field-label" htmlFor="next-password">新密码</label><Input id="next-password" className="app-input" type="password" value={nextPassword} onChange={event => setNextPassword(event.target.value)} autoComplete="new-password" minLength={8} />{formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={!currentPassword || nextPassword.length < 8}>保存新密码</Button></form>}
+      {visibleDialog === 'password' && <form onSubmit={event => { event.preventDefault(); void changePassword(); }}><fieldset disabled={passwordBusy} className="admin-editor-fields"><PasswordFields id="account-change" current={currentPassword} onCurrent={setCurrentPassword} next={nextPassword} onNext={setNextPassword} confirmation={confirmPassword} onConfirmation={setConfirmPassword} />{formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={passwordBusy || !currentPassword || nextPassword.length < 8 || !confirmPassword}>{passwordBusy && <LoaderCircle className="spinning" />}保存新密码</Button></fieldset></form>}
       {visibleDialog === 'settings' && <div className="settings-form">
         <div className="profile-setting"><span>{ownName}</span><Button type="button" variant="ghost" onClick={() => open('name')}>修改名字</Button></div>
         <div className="profile-setting profile-score"><span><GraduationCap />{ieltsScore ? `雅思 ${ieltsScore} 分` : '未设定雅思成绩'}</span><Button type="button" variant="ghost" onClick={() => open('ielts')}>设定雅思成绩</Button></div>

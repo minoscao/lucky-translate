@@ -2,7 +2,7 @@ import { getDb } from '@/db';
 import { COACH_RESPONSE_CONTRACT, DEFAULT_COACH_SKILL } from '@/lib/coach';
 
 const encoder = new TextEncoder(), decoder = new TextDecoder();
-const password = () => process.env.ADMIN_PASSWORD || 'Minocolin1';
+const password = () => { const value = process.env.CONFIG_ENCRYPTION_SECRET || process.env.ADMIN_PASSWORD; if (!value) throw new Error('服务保密配置尚未完成'); return value; };
 const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
 const unb64 = (value: string) => Uint8Array.from(atob(value), character => character.charCodeAt(0));
 

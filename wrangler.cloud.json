@@ -3,7 +3,9 @@
   "account_id": "660184157223097c9afd3d253ec86ce6",
   "main": "dist/server/index.js",
   "compatibility_date": "2026-05-15",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "placement": {
     "hostname": "api.deepseek.com"
   },
@@ -22,5 +24,17 @@
   },
   "observability": {
     "enabled": true
-  }
+  },
+  "vars": {
+    "EMAIL_FROM": "noreply@mia-dynamic.com",
+    "PUBLIC_APP_URL": "https://luckytranslate.mia-dynamic.com"
+  },
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": [
+        "noreply@mia-dynamic.com"
+      ]
+    }
+  ]
 }

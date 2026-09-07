@@ -90,3 +90,13 @@ export const payments = sqliteTable('payments', {
   paidAt: integer('paid_at').notNull(),
   createdAt: integer('created_at').notNull(),
 }, table => [index('idx_payments_paid_at').on(table.paidAt), index('idx_payments_user_paid_at').on(table.userId, table.paidAt)]);
+
+export const authLimits = sqliteTable('auth_limits', {
+  key: text('key').primaryKey(), attempts: integer('attempts').notNull(), expiresAt: integer('expires_at').notNull(),
+});
+export const passwordResets = sqliteTable('password_resets', {
+  tokenHash: text('token_hash').primaryKey(), userId: text('user_id').notNull(), expiresAt: integer('expires_at').notNull(),
+});
+export const adminSessions = sqliteTable('admin_sessions', {
+  tokenHash: text('token_hash').primaryKey(), role: text('role').notNull(), expiresAt: integer('expires_at').notNull(),
+});

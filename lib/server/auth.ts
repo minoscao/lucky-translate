@@ -1,10 +1,12 @@
+import { digestToken, randomToken, ensureAuthTables, authError, validateNewPassword } from '@/lib/server/auth-security';
+import { PLAN_DEFAULTS } from '@/lib/membership-plans';
 import { getDb } from '@/db';
 
 const SESSION_COOKIE = 'lucky-session';
 const ADMIN_COOKIE = 'lucky-admin';
 const SUPER_ADMIN_COOKIE = 'lucky-super-admin';
-const ADMIN_PASSWORD = () => process.env.ADMIN_PASSWORD || 'Minocolin1';
-const SUPER_ADMIN_PASSWORD = () => process.env.SUPER_ADMIN_PASSWORD || 'Canoncanon1#';
+const ADMIN_PASSWORD = () => { const value = process.env.ADMIN_PASSWORD; if (!value) throw authError('管理员登录尚未配置', 503); return value; };
+const SUPER_ADMIN_PASSWORD = () => { const value = process.env.SUPER_ADMIN_PASSWORD; if (!value) throw authError('管理员登录尚未配置', 503); return value; };
 const encoder = new TextEncoder();
 
 export type Account = {
@@ -60,24 +62,13 @@ function adminCookie(request: Request, token: string, maxAge = 8 * 3600) {
 
 function superAdminCookie(request: Request, token: string, maxAge = 30 * 60) {
   const secure = new URL(request.url).protocol === 'https:' ? ' Secure;' : '';
-  return `${SUPER_ADMIN_COOKIE}=${token}; Path=/admin; HttpOnly;${secure} SameSite=Strict; Max-Age=${maxAge}`;
+  return `${SUPER_ADMIN_COOKIE}=${token}; Path=/; HttpOnly;${secure} SameSite=Strict; Max-Age=${maxAge}`;
 }
 
-export const PLAN_DEFAULTS = {
-  lv1: { dailySeconds: 600, monthlySeconds: 0, dailyTokens: 10_000, priceCents: 0 },
-  lv2: { dailySeconds: 7_200, monthlySeconds: 0, dailyTokens: 100_000, priceCents: 1_990 },
-  lv3: { dailySeconds: 0, monthlySeconds: 360_000, dailyTokens: 200_000, priceCents: 3_990 },
-} as const;
+export { PLAN_DEFAULTS } from '@/lib/membership-plans';
 
 export async function ensureBootstrap() {
   const db = getDb(), now = Date.now();
-  const seeded = await db.prepare('SELECT id FROM users WHERE username = ?1 LIMIT 1').bind('miajin').first<{ id: string }>();
-  if (!seeded) {
-    const plan = PLAN_DEFAULTS.lv2, password = await hashPassword('Miamia1');
-    await db.prepare(`INSERT INTO users (id, username, email, password_hash, status, level, daily_seconds_limit, monthly_seconds_limit, daily_token_limit, monthly_price_cents, storage_limit_bytes, membership_expires_at, admin_note, created_at, updated_at)
-      VALUES (?1, ?2, NULL, ?3, 'active', 'lv2', ?4, ?5, ?6, ?7, 104857600, NULL, '初始 Lv2 测试账户', ?8, ?8)`)
-      .bind(crypto.randomUUID(), 'miajin', password, plan.dailySeconds, plan.monthlySeconds, plan.dailyTokens, plan.priceCents, now).run();
-  }
   const prices = [
     ['deepseek-v4-flash-offpeak-20260816', 'off_peak', 7000, 220000, 660000],
     ['deepseek-v4-flash-peak-20260816', 'peak', 14000, 440000, 1320000],
@@ -127,17 +118,51 @@ export async function destroySession(request: Request) {
   return sessionCookie(request, '', 0);
 }
 
-export async function adminToken() { return sha256(`lucky-admin\n${ADMIN_PASSWORD()}`); }
-export async function isAdmin(request: Request) { const expected = await adminToken(); return safeEqual(cookie(request, ADMIN_COOKIE), expected); }
-export async function requireAdmin(request: Request) { if (!await isAdmin(request)) throw Object.assign(new Error('请先登录管理后台'), { status: 401 }); }
-export async function checkAdminPassword(request: Request, password: string) {
-  if (!safeEqual(password, ADMIN_PASSWORD())) return null;
-  return adminCookie(request, await adminToken());
+type AdminRole = 'admin' | 'super';
+async function credential(role: AdminRole) {
+  const row = await getDb().prepare('SELECT value FROM app_config WHERE key = ?1').bind(`${role}_password_hash`).first<{ value: string }>();
+  return row?.value || null;
 }
-export function clearAdminCookie(request: Request) { return adminCookie(request, '', 0); }
-export async function superAdminToken() { return sha256(`lucky-super-admin\n${SUPER_ADMIN_PASSWORD()}`); }
-export async function isSuperAdmin(request: Request) { const expected = await superAdminToken(); return safeEqual(cookie(request, SUPER_ADMIN_COOKIE), expected); }
+async function verifyAdminPassword(role: AdminRole, password: string) {
+  const stored = await credential(role);
+  return stored ? verifyPassword(password, stored) : safeEqual(password, role === 'admin' ? ADMIN_PASSWORD() : SUPER_ADMIN_PASSWORD());
+}
+async function issueAdminSession(request: Request, role: AdminRole) {
+  await ensureAuthTables();
+  const token = randomToken(), expires = Date.now() + (role === 'admin' ? 8 * 3600_000 : 30 * 60_000);
+  await getDb().prepare('INSERT INTO admin_sessions(token_hash,role,expires_at) VALUES (?1,?2,?3)').bind(await digestToken(token), role, expires).run();
+  return role === 'admin' ? adminCookie(request, token) : superAdminCookie(request, token);
+}
+async function hasAdminSession(request: Request, role: AdminRole) {
+  const token = cookie(request, role === 'admin' ? ADMIN_COOKIE : SUPER_ADMIN_COOKIE);
+  if (!token) return false;
+  await ensureAuthTables();
+  return Boolean(await getDb().prepare('SELECT 1 ok FROM admin_sessions WHERE token_hash=?1 AND role=?2 AND expires_at>?3').bind(await digestToken(token), role, Date.now()).first());
+}
+export async function isAdmin(request: Request) { return hasAdminSession(request, 'admin'); }
+export async function requireAdmin(request: Request) { if (!await isAdmin(request)) throw authError('请先登录管理后台', 401); }
+export async function checkAdminPassword(request: Request, password: string) {
+  if (!await verifyAdminPassword('admin', password)) return null;
+  return issueAdminSession(request, 'admin');
+}
+export async function clearAdminCookie(request: Request) {
+  await ensureAuthTables();
+  await getDb().prepare('DELETE FROM admin_sessions WHERE token_hash IN (?1,?2)').bind(await digestToken(cookie(request,ADMIN_COOKIE)), await digestToken(cookie(request,SUPER_ADMIN_COOKIE))).run();
+  return adminCookie(request, '', 0);
+}
+export async function isSuperAdmin(request: Request) { return hasAdminSession(request, 'super'); }
 export async function checkSuperAdminPassword(request: Request, password: string) {
-  if (!safeEqual(password, SUPER_ADMIN_PASSWORD())) return null;
-  return superAdminCookie(request, await superAdminToken());
+  if (!await verifyAdminPassword('super', password)) return null;
+  return issueAdminSession(request, 'super');
+}
+export async function changeAdminPassword(request: Request, body: Record<string, unknown>) {
+  const role: AdminRole = body.role === 'super' ? 'super' : 'admin';
+  const next = validateNewPassword(body.nextPassword, body.confirmPassword);
+  if (typeof body.currentPassword !== 'string' || !await verifyAdminPassword(role, body.currentPassword)) throw authError('当前密码不正确', 401);
+  await ensureAuthTables();
+  await getDb().batch([
+    getDb().prepare('INSERT INTO app_config(key,value,updated_at) VALUES (?1,?2,?3) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at').bind(`${role}_password_hash`, await hashPassword(next), Date.now()),
+    getDb().prepare('DELETE FROM admin_sessions WHERE role=?1').bind(role),
+  ]);
+  return issueAdminSession(request, role);
 }

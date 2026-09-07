@@ -1,11 +1,11 @@
 const COOKIE = 'lucky-site-access';
-const DEFAULT_PASSWORD = 'Minocolin1';
 const encoder = new TextEncoder();
 
-const accessPassword = () => process.env.SITE_PASSWORD || DEFAULT_PASSWORD;
+const accessPassword = () => process.env.SITE_PASSWORD || '';
 
 async function expectedToken() {
   const password = accessPassword();
+  if (!password) return '';
   const digest = await crypto.subtle.digest('SHA-256', encoder.encode(`lucky-site-access\n${password}`));
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
@@ -35,6 +35,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const expected = accessPassword();
+  if (!expected) return json({error:'此登录入口未启用'},503);
   const token = await expectedToken();
   let password = '';
   try {

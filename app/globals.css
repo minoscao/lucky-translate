@@ -472,7 +472,7 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .admin-login h1 { margin: 0 0 4px; }
 .admin-login label { display: grid; gap: 8px; font-size: .82rem; color: var(--muted-foreground); }
 .admin-login p, .admin-error { margin: 0; color: var(--destructive); }
-.admin-header, .admin-header > div, .admin-section > header, .admin-user-card > header, .admin-user-card > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.admin-header, .admin-header > div, .admin-section > header, .admin-editor-fields > header, .admin-editor-fields > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .admin-header h1 { margin: 3px 0 0; font-size: clamp(1.7rem, 4vw, 2.4rem); }
 .admin-header small { color: var(--primary); letter-spacing: .14em; }
 .admin-overview { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -496,8 +496,8 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .admin-section > header { align-items: flex-start; margin-bottom: 14px; }
 .admin-users { display: grid; gap: 12px; }
 .admin-user-card { padding: 15px; border: 1px solid var(--border); border-radius: 16px; background: var(--background); }
-.admin-user-card > header > div { display: grid; gap: 3px; }
-.admin-user-card > header span { color: var(--muted-foreground); font-size: .74rem; }
+.admin-editor-fields > header > div { display: grid; gap: 3px; }
+.admin-editor-fields > header span { color: var(--muted-foreground); font-size: .74rem; }
 .member-state { padding: 5px 9px; border-radius: 999px; border: 1px solid var(--border); }
 .member-state.active { color: var(--partner-accent) !important; border-color: var(--partner-border); background: var(--partner-surface); }
 .member-state.pending { color: var(--primary) !important; }
@@ -508,8 +508,8 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .admin-user-fields { display: grid; grid-template-columns: repeat(7, minmax(100px, 1fr)); gap: 8px; }
 .admin-user-fields label, .admin-note { display: grid; gap: 5px; color: var(--muted-foreground); font-size: .68rem; }
 .admin-note { margin-top: 9px; }
-.admin-user-card > footer { margin-top: 10px; }
-.admin-user-card > footer span { color: var(--partner-accent); font-size: .72rem; }
+.admin-editor-fields > footer { margin-top: 10px; }
+.admin-editor-fields > footer span { color: var(--partner-accent); font-size: .72rem; }
 .client-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .client-card { display: grid; gap: 14px; padding: 16px; text-align: left; border: 1px solid var(--border); border-radius: 16px; background: var(--background); color: var(--foreground); cursor: pointer; transition: border-color .16s ease, transform .16s ease, background .16s ease; }
 .client-card:hover { border-color: var(--self-accent); background: var(--secondary); transform: translateY(-1px); }
@@ -599,3 +599,6 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
   .admin-client-sheet { width: 100vw !important; }
   .admin-client-sheet .admin-user-metrics, .admin-client-sheet .admin-user-fields { grid-template-columns: 1fr; }
 }
+
+.admin-client-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.admin-editor-fields { display: grid; min-width: 0; gap: 16px; padding: 0; border: 0; }

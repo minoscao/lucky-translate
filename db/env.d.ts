@@ -2,6 +2,7 @@ declare namespace Cloudflare {
   interface Env {
     DB: D1Database;
     AI?: Ai;
+    EMAIL?: { send(message: { to: string; from: string; subject: string; text: string }): Promise<unknown> };
   }
 }
 

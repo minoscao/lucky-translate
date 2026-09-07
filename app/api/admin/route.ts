@@ -1,6 +1,9 @@
+import { limitAuth } from '@/lib/server/auth-security';
+import { recoveryConfigured, sendEmailTest } from '@/lib/server/password-recovery';
+import { createAccount } from '@/lib/server/create-account';
 import { getDb } from '@/db';
 import { accountSnapshot } from '@/lib/server/account';
-import { Account, checkAdminPassword, checkSuperAdminPassword, clearAdminCookie, ensureBootstrap, hashPassword, isAdmin, isSuperAdmin, PLAN_DEFAULTS, requireAdmin } from '@/lib/server/auth';
+import { Account, changeAdminPassword, checkAdminPassword, checkSuperAdminPassword, clearAdminCookie, ensureBootstrap, hashPassword, isAdmin, isSuperAdmin, PLAN_DEFAULTS, requireAdmin } from '@/lib/server/auth';
 import { deepSeekConfigured, getCoachSkill, setCoachSkill, setDeepSeekKey } from '@/lib/server/config';
 import { json, readJson, sameOrigin } from '@/lib/server/http';
 import { getTextTimeRules, refundLegacyTime, setTextTimeRules, timeLedger } from '@/lib/server/text-time';
@@ -16,7 +19,7 @@ async function dashboard(request?: Request, businessUnlocked?: boolean) {
     FROM payments p JOIN users u ON u.id = p.user_id ORDER BY p.paid_at DESC`).all();
   const multiplier = await getDb().prepare("SELECT value FROM app_config WHERE key = 'cost_multiplier'").first<{ value: string }>();
   return {
-    users, prices: prices.results, history: history.results, payments: payments.results,
+    recoveryConfigured: recoveryConfigured(), users, prices: prices.results, history: history.results, payments: payments.results,
     deepseekConfigured: await deepSeekConfigured(), costMultiplier: Math.max(.1, Math.min(100, Number(multiplier?.value) || 1)),
     coachSkill: await getCoachSkill(), timeRules: await getTextTimeRules(), businessUnlocked: businessUnlocked ?? (request ? await isSuperAdmin(request) : false),
   };
@@ -32,11 +35,28 @@ export async function POST(request: Request) {
   try {
     const body = await readJson<Record<string, unknown>>(request);
     if (body.action === 'login') {
+      await limitAuth(request, 'admin-login');
       const cookie = await checkAdminPassword(request, typeof body.password === 'string' ? body.password : '');
       if (!cookie) return json({ error: '管理密码不正确' }, 401);
       return json({ authenticated: true, ...(await dashboard(request)) }, 200, { 'Set-Cookie': cookie });
     }
     await requireAdmin(request);
+    if (body.action === 'test_email') {
+      await limitAuth(request, 'admin-test-email', '', 5, 30);
+      await sendEmailTest(typeof body.email === 'string' ? body.email.trim() : '');
+      return json({ authenticated: true, sent: true });
+    }
+    if (body.action === 'change_admin_password') {
+      await limitAuth(request, 'admin-change-password');
+      const cookie = await changeAdminPassword(request,body);
+      return json({authenticated:true,saved:true,...(await dashboard(request))},200,{'Set-Cookie':cookie});
+    }
+    if (body.action === 'create_user') {
+      if (body.level !== 'lv1' && body.level !== 'lv2' && body.level !== 'lv3') return json({ error: '请选择会员等级' }, 400);
+      if (body.status !== 'active' && body.status !== 'pending' && body.status !== 'suspended') return json({ error: '请选择账户状态' }, 400);
+      const createdUserId = await createAccount(body, { level: body.level, status: body.status });
+      return json({ authenticated: true, createdUserId, ...(await dashboard(request)) }, 201);
+    }
     if (body.action === 'refund_legacy_time') {
       const account = await getDb().prepare('SELECT * FROM users WHERE id=?1').bind(typeof body.userId === 'string' ? body.userId : '').first<Account>();
       if (!account) return json({ error: '没有找到客户' }, 404);
@@ -78,6 +98,7 @@ export async function POST(request: Request) {
       return json({ authenticated: true, saved: true, ...(await dashboard(request)) });
     }
     if (body.action === 'unlock_business') {
+      await limitAuth(request, 'super-admin-login');
       const cookie = await checkSuperAdminPassword(request, typeof body.password === 'string' ? body.password : '');
       if (!cookie) return json({ error: '超级管理员密码不正确' }, 403);
       return json({ authenticated: true, ...(await dashboard(request, true)) }, 200, { 'Set-Cookie': cookie });
@@ -103,4 +124,4 @@ export async function POST(request: Request) {
   } catch (error) { return json({ error: error instanceof Error ? error.message : '管理操作失败' }, (error as { status?: number }).status || 500); }
 }
 
-export async function DELETE(request: Request) { return json({ authenticated: false }, 200, { 'Set-Cookie': clearAdminCookie(request) }); }
+export async function DELETE(request: Request) { if(!sameOrigin(request)) return json({error:'请从管理后台操作'},403); return json({ authenticated: false }, 200, { 'Set-Cookie': await clearAdminCookie(request) }); }

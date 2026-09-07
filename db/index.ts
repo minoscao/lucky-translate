@@ -8,3 +8,5 @@ export function getDb(): D1Database {
 export function getAi(): Ai | undefined {
   return env.AI;
 }
+
+export function getEmailSender() { return env.EMAIL; }
