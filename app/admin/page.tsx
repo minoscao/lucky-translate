@@ -1,9 +1,8 @@
 'use client';
 /* oxlint-disable jsx-a11y/label-has-associated-control, jsx-a11y/prefer-tag-over-role -- Base UI fields retain their visible accessible labels. */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CheckCircle2, CreditCard, KeyRound, LoaderCircle, LogOut, RefreshCw, Settings2, ShieldCheck, UserPlus, Users } from 'lucide-react';
-import { PasswordFields } from '@/components/password-fields';
 import { defaultClientPassword } from '@/lib/membership-plans';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,13 +11,14 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Textarea } from '@/components/ui/textarea';
 import { AccountSnapshot, accountRequest } from '@/lib/account';
 import { TimeEntry, TimeLedger } from '@/components/time-ledger';
+import { DEFAULT_RETENTION, RetentionRules } from '@/lib/retention';
 import { TextTimeRules } from '@/lib/text-time';
 import { PLAN_DEFAULTS } from '@/lib/membership-plans';
 
 type AdminUser = AccountSnapshot & { adminNote: string; createdAt: number; lastLoginAt: number | null; timeLedger: TimeEntry[] };
 type Payment = { id: string; user_id: string; username: string; amount_cents: number; currency: string; status: string; note: string; paid_at: number; created_at: number };
 type Usage = { id: string; username: string; feature: string; model: string; input_tokens: number; cached_tokens: number; output_tokens: number; total_tokens: number; cost_micros: number; price_snapshot: string; created_at: number };
-type AdminData = {
+type AdminData = { retentionRules: RetentionRules;
   recoveryConfigured: boolean; createdUserId?: string; authenticated: boolean; deepseekConfigured: boolean; costMultiplier: number; users: AdminUser[]; payments: Payment[]; history: Usage[];
   businessUnlocked: boolean; coachSkill: string; timeRules: TextTimeRules;
   prices: Array<{ provider: string; model: string; period: string; cache_hit_micros_per_million: number; input_micros_per_million: number; output_micros_per_million: number; effective_at: number }>;
@@ -79,10 +79,9 @@ function UserEditor({ user, refresh }: { user?: AdminUser; refresh: (data: Admin
 }
 
 function BusinessSettings({ data, update, error }: { data: AdminData; update: (data: AdminData) => void; error: (value: string) => void }) {
-  const [apiKey, setApiKey] = useState(''), [multiplier, setMultiplier] = useState(String(data.costMultiplier)), [skill, setSkill] = useState(data.coachSkill), [superPassword, setSuperPassword] = useState('');
+  const [apiKey, setApiKey] = useState(''), [multiplier, setMultiplier] = useState(String(data.costMultiplier)), [skill, setSkill] = useState(data.coachSkill);
+  const [retention, setRetention] = useState(data.retentionRules || DEFAULT_RETENTION);
   const [saving, setSaving] = useState(false), [message, setMessage] = useState('');
-  const [passwordRole,setPasswordRole]=useState('admin'),[oldPassword,setOldPassword]=useState(''),[newPassword,setNewPassword]=useState(''),[confirmPassword,setConfirmPassword]=useState(''),[passwordMessage,setPasswordMessage]=useState('');
-  const savePassword=async(event:React.SyntheticEvent<HTMLFormElement>)=>{event.preventDefault();if(saving)return;setPasswordMessage('');if(newPassword!==confirmPassword){setPasswordMessage('两次输入的新密码不一致');return;}setSaving(true);try{const next=await accountRequest<AdminData>('/api/admin',{method:'POST',body:JSON.stringify({action:'change_admin_password',role:passwordRole,currentPassword:oldPassword,nextPassword:newPassword,confirmPassword})});update(next);setOldPassword('');setNewPassword('');setConfirmPassword('');setPasswordMessage('密码已更新，其他设备需重新登录');}catch(cause){setPasswordMessage(cause instanceof Error?cause.message:'修改失败');}finally{setSaving(false);}};
   const [testEmail,setTestEmail]=useState(''),[emailMessage,setEmailMessage]=useState('');
   const testDelivery=async(event:React.SyntheticEvent<HTMLFormElement>)=>{event.preventDefault();if(saving)return;setSaving(true);setEmailMessage('');try{await accountRequest('/api/admin',{method:'POST',body:JSON.stringify({action:'test_email',email:testEmail.trim()})});setEmailMessage('测试邮件已提交发送，请检查收件箱');}catch(cause){setEmailMessage(cause instanceof Error?cause.message:'发送失败');}finally{setSaving(false);}};
   const [wordSeconds, setWordSeconds] = useState(String(data.timeRules.secondsPerWord)), [characterSeconds, setCharacterSeconds] = useState(String(data.timeRules.secondsPerCharacter));
@@ -92,14 +91,15 @@ function BusinessSettings({ data, update, error }: { data: AdminData; update: (d
     catch (cause) { error(cause instanceof Error ? cause.message : '保存失败'); } finally { setSaving(false); }
   };
   return <div className="admin-tab-content">
-    <section className="admin-section"><header><div><h2>账户与安全</h2><span>找回密码邮件：{data.recoveryConfigured ? '已配置' : '等待开通发信服务'}</span></div></header><form onSubmit={savePassword}><fieldset disabled={saving} className="admin-editor-fields"><label className="field-label">修改哪个密码<Select disabled={saving} value={passwordRole} onValueChange={value=>{setPasswordRole(value||'admin');setOldPassword('');setNewPassword('');setConfirmPassword('');setPasswordMessage('');}}><SelectTrigger><SelectValue>{passwordRole==='admin'?'管理后台密码':'超级管理员密码'}</SelectValue></SelectTrigger><SelectContent><SelectItem value="admin">管理后台密码</SelectItem><SelectItem value="super">超级管理员密码</SelectItem></SelectContent></Select></label><div className="admin-user-fields"><PasswordFields id="admin-change" current={oldPassword} onCurrent={setOldPassword} next={newPassword} onNext={setNewPassword} confirmation={confirmPassword} onConfirmation={setConfirmPassword} /></div><footer className="admin-action-footer"><span role="status">{passwordMessage}</span><Button type="submit" disabled={saving||!oldPassword||newPassword.length<8||!confirmPassword}><KeyRound />修改密码</Button></footer></fieldset></form></section>
+    <section className="admin-section"><header><div><h2>账户与安全</h2><span>管理后台使用 Cloudflare 身份验证</span></div><ShieldCheck /></header><p>管理员权限由 Cloudflare 管理，本站不再保存后台密码。</p></section>
+    <section className="admin-section"><header><h2>云端记录保留期</h2></header><div className="admin-user-fields">{(['lv1','lv2','lv3'] as const).map(level => <label key={level}>{level.toUpperCase()} · 月<Input type="number" min={1} max={24} value={retention[level]} onChange={event => setRetention(current => ({ ...current, [level]: Number(event.target.value) }))} /></label>)}</div><p>云端保存正式记录，本地缓存按账户独立。到期清理对话和总结，账户资料与付款记录保留。</p><footer className="admin-action-footer"><Button disabled={saving} onClick={() => void request({ action: 'set_retention_rules', rules: retention })}>保存保留期</Button></footer></section>
     <section className="admin-section"><header><h2>测试邮件</h2></header><form className="super-admin-unlock" onSubmit={testDelivery}><Input type="email" required value={testEmail} onChange={event=>setTestEmail(event.target.value)} placeholder="接收测试邮件的邮箱" aria-label="接收测试邮件的邮箱" /><Button type="submit" disabled={saving||!testEmail.trim()||!data.recoveryConfigured}>发送测试邮件</Button></form><p role="status">{emailMessage}</p></section>
     <section className="admin-section"><header><div><h2>对话时长折算</h2><span>按双方本次对话的文字计算，忽略播放倍速。修改只影响之后的对话。</span></div></header><div className="admin-user-fields"><label>英文及其他分词语言：秒 / 词<Input type="number" min="0.05" max="5" step="0.05" value={wordSeconds} onChange={event => setWordSeconds(event.target.value)} /></label><label>中文及中日韩文字：秒 / 字<Input type="number" min="0.05" max="5" step="0.05" value={characterSeconds} onChange={event => setCharacterSeconds(event.target.value)} /></label></div><p>训练、翻译 100% · 总结 10% · 空闲、等待和失败回复不扣时。</p><footer className="admin-action-footer"><span role="status">{message}</span><Button disabled={saving} onClick={() => void request({ action: 'set_text_time_rules', rules: { secondsPerWord: Number(wordSeconds), secondsPerCharacter: Number(characterSeconds) } })}>保存计时规则</Button></footer></section>
     <section className="admin-key-card"><div><h2>DeepSeek 服务密钥</h2><p>仅在服务端加密保存，客户页面不会显示。</p></div><Input type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={data.deepseekConfigured ? '输入新密钥即可替换' : '输入 DeepSeek API Key'} autoComplete="off" /><Button type="button" onClick={() => void request({ action: 'set_deepseek_key', key: apiKey }).then(() => setApiKey(''))} disabled={!apiKey || saving}>{saving ? <LoaderCircle className="spinning" /> : '保存密钥'}</Button></section>
     <section className="admin-key-card"><div><h2>客户费用显示倍率</h2><p>实际 $1.00，倍率 2.0 时客户看到 $2.00。</p></div><Input type="number" min="0.1" max="100" step="0.1" value={multiplier} onChange={event => setMultiplier(event.target.value)} /><Button type="button" onClick={() => void request({ action: 'set_cost_multiplier', multiplier: Number(multiplier) })} disabled={saving}>保存倍率</Button></section>
     <section className="admin-section skill-section"><header><div><p className="admin-eyebrow">COACH</p><h2>Current coach skill</h2><span>当前使用的完整规则。未解锁时只能阅读。</span></div>{data.businessUnlocked && <span className="member-state active">可编辑</span>}</header>
       {data.businessUnlocked ? <Textarea className="admin-skill" value={skill} maxLength={20_000} onChange={event => setSkill(event.target.value)} /> : <pre className="admin-skill admin-skill-readonly">{data.coachSkill}</pre>}
-      {data.businessUnlocked ? <footer className="admin-action-footer"><span>{message}</span><Button type="button" onClick={() => void request({ action: 'update_coach_skill', skill })} disabled={saving}>{saving ? <LoaderCircle className="spinning" /> : <CheckCircle2 />}保存 Coach skill</Button></footer> : <form className="super-admin-unlock" onSubmit={event => { event.preventDefault(); void request({ action: 'unlock_business', password: superPassword }).then(() => setSuperPassword('')); }}><Input type="password" value={superPassword} onChange={event => setSuperPassword(event.target.value)} placeholder="输入超级管理员密码以启用编辑" autoComplete="current-password" /><Button type="submit" disabled={!superPassword || saving}><KeyRound />启用编辑</Button></form>}
+      {data.businessUnlocked ? <footer className="admin-action-footer"><span>{message}</span><Button type="button" onClick={() => void request({ action: 'update_coach_skill', skill })} disabled={saving}>{saving ? <LoaderCircle className="spinning" /> : <CheckCircle2 />}保存 Coach skill</Button></footer> : <p className="field-note">当前身份可查看规则。编辑权限由 Cloudflare 管理员名单控制。</p>}
     </section>
     <section className="admin-section"><header><h2>DeepSeek 当前价格</h2><span>美元 / 100 万 Token，按请求发生时的峰时或非峰时价格存档。</span></header><div className="price-grid">{data.prices.map(price => <article key={`${price.model}-${price.period}`}><strong>{price.period === 'peak' ? '峰时' : '非峰时'}</strong><span>缓存命中 ${(price.cache_hit_micros_per_million / 1_000_000).toFixed(4)}</span><span>输入 ${(price.input_micros_per_million / 1_000_000).toFixed(3)}</span><span>输出 ${(price.output_micros_per_million / 1_000_000).toFixed(3)}</span></article>)}</div></section>
   </div>;
@@ -127,25 +127,18 @@ function Payments({ data, update, error }: { data: AdminData; update: (data: Adm
 }
 
 export default function AdminPage() {
-  const [data, setData] = useState<AdminData>(), [password, setPassword] = useState(''), [tab, setTab] = useState<Tab>('business'), [selectedUser, setSelectedUser] = useState<AdminUser>();
+  const [data, setData] = useState<AdminData>(), [tab, setTab] = useState<Tab>('business'), [selectedUser, setSelectedUser] = useState<AdminUser>();
   const [creatingUser, setCreatingUser] = useState(false);
-  const legacyImportTried = useRef(false); const [loading, setLoading] = useState(true), [error, setError] = useState('');
+  const [loading, setLoading] = useState(true), [error, setError] = useState('');
   const load = async () => { setLoading(true); try { const next = await accountRequest<AdminData>('/api/admin'); setData(next); setError(''); } catch { setData(undefined); } finally { setLoading(false); } };
   useEffect(() => { queueMicrotask(() => void load()); }, []);
-  useEffect(() => {
-    if (!data?.authenticated || data.deepseekConfigured || legacyImportTried.current) return;
-    legacyImportTried.current = true;
-    const legacyKey = localStorage.getItem('lucky-deepseek-key')?.trim();
-    localStorage.removeItem('lucky-openai-key'); localStorage.removeItem('lucky-custom-voice'); localStorage.removeItem('lucky-voice-setup-dismissed');
-    if (!legacyKey) return;
-    void accountRequest<AdminData>('/api/admin', { method: 'POST', body: JSON.stringify({ action: 'set_deepseek_key', key: legacyKey }) }).then(next => { localStorage.removeItem('lucky-deepseek-key'); localStorage.removeItem('lucky-translation-provider'); setData(next); }).catch(cause => setError(cause instanceof Error ? cause.message : '无法导入本设备原有密钥'));
-  }, [data?.authenticated, data?.deepseekConfigured]);
-  const login = async (event: React.SyntheticEvent<HTMLFormElement>) => { event.preventDefault(); setLoading(true); setError(''); try { const next = await accountRequest<AdminData>('/api/admin', { method: 'POST', body: JSON.stringify({ action: 'login', password }) }); setData(next); setPassword(''); } catch (cause) { setError(cause instanceof Error ? cause.message : '无法登录'); } finally { setLoading(false); } };
+
   if (loading && !data) return <main className="admin-page"><div className="admin-loading"><LoaderCircle className="spinning" />正在打开管理后台…</div></main>;
-  if (!data?.authenticated) return <main className="admin-page"><form className="admin-login" onSubmit={login}><span><ShieldCheck /></span><h1>Lucky 管理后台</h1><label htmlFor="admin-password">管理密码</label><Input id="admin-password" type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" />{error && <p role="alert">{error}</p>}<Button type="submit" disabled={!password || loading}>{loading ? <LoaderCircle className="spinning" /> : <KeyRound />}进入后台</Button></form></main>;
+  if (!data?.authenticated) return <main className="admin-page"><section className="admin-login"><span><ShieldCheck /></span><h1>Lucky 管理后台</h1><p>通过 Cloudflare 验证管理员身份后进入。</p>{error && <p role="alert">{error}</p>}<Button onClick={() => { window.location.href = '/admin'; }}><ShieldCheck />通过 Cloudflare 登录</Button></section></main>;
+
   const titles: Record<Tab, string> = { business: 'Business settings', clients: 'Clients', payment: 'Payment' };
   const nav = (id: Tab, Icon: typeof Settings2, label: string, badge?: string | number) => <button type="button" className={tab === id ? 'active' : ''} onClick={() => setTab(id)}><Icon /><span>{label}</span>{badge ? <b>{badge}</b> : null}</button>;
-  return <main className="admin-page"><section className="admin-console"><aside className="admin-sidebar"><div className="admin-brand"><span>LUCKY</span><small>OPERATIONS</small></div><nav className="admin-sidebar-nav" aria-label="后台导航">{nav('business', Settings2, 'Business settings')}{nav('clients', Users, 'Clients', data.users.filter(user => user.status === 'pending').length || undefined)}{nav('payment', CreditCard, 'Payment')}</nav><div className="admin-sidebar-footer"><span>DeepSeek <b className={data.deepseekConfigured ? 'is-ready' : ''}>{data.deepseekConfigured ? '已连接' : '未配置'}</b></span><Button variant="ghost" onClick={() => void load()}><RefreshCw />刷新数据</Button><Button variant="ghost" onClick={() => void accountRequest('/api/admin', { method: 'DELETE' }).then(() => setData(undefined))}><LogOut />退出后台</Button></div></aside>
+  return <main className="admin-page"><section className="admin-console"><aside className="admin-sidebar"><div className="admin-brand"><span>LUCKY</span><small>OPERATIONS</small></div><nav className="admin-sidebar-nav" aria-label="后台导航">{nav('business', Settings2, 'Business settings')}{nav('clients', Users, 'Clients', data.users.filter(user => user.status === 'pending').length || undefined)}{nav('payment', CreditCard, 'Payment')}</nav><div className="admin-sidebar-footer"><span>DeepSeek <b className={data.deepseekConfigured ? 'is-ready' : ''}>{data.deepseekConfigured ? '已连接' : '未配置'}</b></span><Button variant="ghost" onClick={() => void load()}><RefreshCw />刷新数据</Button><Button variant="ghost" onClick={() => { window.location.href = '/cdn-cgi/access/logout'; }}><LogOut />退出后台</Button></div></aside>
     <section className="admin-workspace"><header className="admin-workspace-header"><div><p className="admin-eyebrow">LUCKY / {titles[tab].toUpperCase()}</p><h1>{titles[tab]}</h1></div><span className="admin-sync-state">{loading ? <LoaderCircle className="spinning" /> : <CheckCircle2 />}已同步</span></header>{error && <p className="admin-error" role="alert">{error}</p>}
       {tab === 'business' && <BusinessSettings data={data} update={setData} error={setError} />}
       {tab === 'clients' && <ClientGrid users={data.users} select={setSelectedUser} create={() => { setSelectedUser(undefined); setCreatingUser(true); }} />}

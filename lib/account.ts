@@ -3,7 +3,7 @@ export type AccountSnapshot = {
   costMultiplier: number;
   limits: { dailySeconds: number; monthlySeconds: number; dailyTokens: number };
   usage: { todayTokens: number; todayCost: number; todaySeconds: number; todayTrainingSeconds: number; todayTranslationSeconds: number; monthTokens: number; monthCost: number; monthSeconds: number; monthTrainingSeconds: number; monthTranslationSeconds: number; totalTokens: number; totalCost: number; totalSeconds: number; totalTrainingSeconds: number };
-  storage: { bytes: number; limitBytes: number; warning: boolean; ratio: number };
+  storage: { retentionMonths: number; bytes: number; limitBytes: number; warning: boolean; ratio: number };
 };
 
 export async function accountRequest<T>(url: string, init?: RequestInit): Promise<T> {
@@ -14,6 +14,3 @@ export async function accountRequest<T>(url: string, init?: RequestInit): Promis
   return data;
 }
 
-export async function saveCloudRecord(id: string, type: string, data: unknown) {
-  return accountRequest<{ saved: boolean; account: AccountSnapshot }>('/api/cloud', { method: 'PUT', body: JSON.stringify({ id, type, data }) });
-}

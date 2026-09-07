@@ -1,3 +1,5 @@
+import { getRetentionRules } from './retention';
+import { retentionMonths } from '@/lib/retention';
 import { getDb } from '@/db';
 import { Account } from './auth';
 
@@ -22,7 +24,7 @@ export async function accountSnapshot(account: Account) {
     membershipExpiresAt: account.membership_expires_at, monthlyPrice: account.monthly_price_cents / 100, costMultiplier: Math.max(.1, Math.min(100, Number(multiplierRow?.value) || 1)),
     limits: { dailySeconds: account.daily_seconds_limit, monthlySeconds: account.monthly_seconds_limit, dailyTokens: account.daily_token_limit },
     usage: { todayTokens: today?.tokens || 0, todayCost: (today?.cost_micros || 0) / 1_000_000, todaySeconds: today?.active_seconds || 0, todayTrainingSeconds: today?.training_seconds || 0, todayTranslationSeconds: today?.translation_seconds || 0, monthTokens: monthUsage?.tokens || 0, monthCost: (monthUsage?.cost_micros || 0) / 1_000_000, monthSeconds: monthUsage?.active_seconds || 0, monthTrainingSeconds: monthUsage?.training_seconds || 0, monthTranslationSeconds: monthUsage?.translation_seconds || 0, totalTokens: totalUsage?.tokens || 0, totalCost: (totalUsage?.cost_micros || 0) / 1_000_000, totalSeconds: totalUsage?.active_seconds || 0, totalTrainingSeconds: totalUsage?.training_seconds || 0 },
-    storage: { bytes: storageBytes, limitBytes: account.storage_limit_bytes, warning: storageRatio >= .85, ratio: storageRatio },
+    storage: { retentionMonths: retentionMonths(account.level, await getRetentionRules()), bytes: storageBytes, limitBytes: account.storage_limit_bytes, warning: storageRatio >= .85, ratio: storageRatio },
   };
 }
 

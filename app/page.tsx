@@ -14,7 +14,8 @@ import { INTERFACE_COPY } from '@/lib/interface-copy';
 import { useCoach } from '@/hooks/use-coach';
 import { useTranslator } from '@/hooks/use-translator';
 import { synthesizeSpeechDirect } from '@/lib/direct-api';
-import { AccountSnapshot, accountRequest, saveCloudRecord } from '@/lib/account';
+import { AccountSnapshot, accountRequest as publicAccountRequest } from '@/lib/account';
+import { createAccountScope, SESSION_CHANGED, SESSION_MARKER } from '@/lib/account-scope';
 import { TimeEntry, TimeLedger } from '@/components/time-ledger';
 import { LANGUAGES, LanguageCode, Pair, RecordGesture, conversationText, language, selectLanguage, transcriptForLanguage } from '@/lib/translation';
 
@@ -182,13 +183,40 @@ function SoloDirectionControls({ controller: t, direction, selfSide, otherSide, 
 }
 
 export default function Home() {
-  const t = useTranslator();
-  const [appMode, setAppMode] = useState<AppMode | null>(null);
   const [account, setAccount] = useState<AccountSnapshot | null>();
+  const [loadError, setLoadError] = useState(false);
+  useEffect(() => {
+    let revision = 0, alive = true;
+    const refresh = () => {
+      const current = ++revision; setAccount(undefined); setLoadError(false);
+      void publicAccountRequest<{ account: AccountSnapshot | null }>('/api/auth').then(data => {
+        if (alive && current === revision) setAccount(data.account);
+      }).catch(() => { if (alive && current === revision) { setAccount(null); setLoadError(true); } });
+    };
+    const changed = (event: StorageEvent) => { if (event.key === SESSION_MARKER) refresh(); };
+    refresh(); window.addEventListener(SESSION_CHANGED, refresh); window.addEventListener('storage', changed);
+    return () => { alive = false; window.removeEventListener(SESSION_CHANGED, refresh); window.removeEventListener('storage', changed); };
+  }, []);
+  if (account === undefined) return <main className="access-page"><section className="access-card" aria-busy="true"><LoaderCircle className="spinning" /> Loading your account…</section></main>;
+  return <AccountWorkspace key={account?.id || 'signed-out'} initialAccount={account} onAccount={setAccount} loadError={loadError} />;
+}
+
+function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAccount: AccountSnapshot | null; onAccount: (account: AccountSnapshot | null) => void; loadError: boolean }) {
+  const [scope] = useState(() => createAccountScope(initialAccount?.id || ''));
+  useEffect(() => { scope.activate(); return () => scope.dispose(); }, [scope]);
+  const localStorage = scope.storage, fetch = scope.fetch, saveCloudRecord = scope.save;
+  const accountRequest = scope.owner ? scope.request : publicAccountRequest;
+  const setAccount = (next: AccountSnapshot | null) => {
+    if (next?.id !== initialAccount?.id) scope.dispose();
+    onAccount(next);
+  };
+  const t = useTranslator(scope);
+  const [appMode, setAppMode] = useState<AppMode | null>(null);
+  const account = initialAccount;
   const [settingsReturnMode, setSettingsReturnMode] = useState<AppMode | null>(null);
   const [coachEntryStage, setCoachEntryStage] = useState<'chat' | 'dashboard'>('chat');
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot-password'>('login');
-  const [authEmail, setAuthEmail] = useState(''), [authUsername, setAuthUsername] = useState(''), [authPassword, setAuthPassword] = useState(''), [authError, setAuthError] = useState('');
+  const [authEmail, setAuthEmail] = useState(''), [authUsername, setAuthUsername] = useState(''), [authPassword, setAuthPassword] = useState(''), [authError, setAuthError] = useState(loadError ? '暂时无法读取账户，请刷新后重试' : '');
   const [confirmPassword, setConfirmPassword] = useState(''), [authConfirmation, setAuthConfirmation] = useState(''), [authNotice, setAuthNotice] = useState(''), [passwordBusy, setPasswordBusy] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [dialog, setDialog] = useState<'settings' | 'help' | 'history' | 'text' | 'edit' | 'name' | 'ielts' | 'password' | 'usage' | null>(null);
@@ -212,7 +240,7 @@ export default function Home() {
   const speechRequest = useRef(0), speechAbort = useRef<AbortController | undefined>(undefined), speechAudio = useRef<HTMLAudioElement | undefined>(undefined), speechUrl = useRef('');
   const { addUsage, setError: reportError } = t;
   const activeAccountId = account?.status === 'active' ? account.id : '';
-  const coach = useCoach('managed', t.addUsage, ieltsScore);
+  const coach = useCoach(scope, t.addUsage, ieltsScore);
   useEffect(() => {
     if (dialog !== 'usage' || !activeAccountId) return;
     let cancelled = false; setTimeLoading(true); setFormError('');
@@ -232,7 +260,6 @@ export default function Home() {
   }, [t.history, t.pair, t.pendingTurns]);
   const visibleDialog = t.needsSettings ? 'settings' : dialog;
   useEffect(() => {
-    void accountRequest<{ account: AccountSnapshot | null }>('/api/auth').then(data => setAccount(data.account)).catch(() => { setAccount(null); setAuthError('暂时无法读取账户，请刷新后重试'); });
     try { localStorage.removeItem('lucky-openai-key'); localStorage.removeItem('lucky-custom-voice'); localStorage.removeItem('lucky-voice-setup-dismissed'); } catch {}
     queueMicrotask(() => { setInstalled(window.matchMedia('(display-mode: standalone)').matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone)); });
     queueMicrotask(() => { const speed = Number(localStorage.getItem('lucky-speech-speed')); if ([.75, 1, 1.5, 2].includes(speed)) setSpeechSpeed(speed); });
@@ -263,7 +290,7 @@ export default function Home() {
       if (!remoteName && !localProfile.name) { setDraftName(name); setDialog('name'); }
     }).catch(() => { if (!cancelled) { const name = account.username || 'Me'; setOwnName(name); setDraftName(name); setDialog('name'); setShowOnboarding(true); } });
     return () => { cancelled = true; };
-  }, [account]);
+  }, [activeAccountId]);
   useEffect(() => {
     if (!activeAccountId) return;
     let cancelled = false;
@@ -316,7 +343,7 @@ export default function Home() {
         speech.onerror = () => { if (requestId === speechRequest.current) { stopSpeech(); reportError('中文朗读失败，请检查设备语音设置'); } };
         window.speechSynthesis.speak(speech); return;
       }
-      const result = await synthesizeSpeechDirect({ text, language: lang, speed: speechSpeed, signal: abort.signal });
+      const result = await synthesizeSpeechDirect({ accountId: scope.owner, text, language: lang, speed: speechSpeed, signal: abort.signal });
       addUsage(result.usage.tokens, result.usage.cost); if (requestId !== speechRequest.current) return;
       const url = URL.createObjectURL(result.audio), audio = new Audio(url);
       audio.playbackRate = speechSpeed;
@@ -366,12 +393,15 @@ export default function Home() {
       if (authMode === 'register' && authPassword !== authConfirmation) throw new Error('两次输入的密码不一致');
       const data = await accountRequest<{ account: AccountSnapshot }>('/api/auth', { method: 'POST', body: JSON.stringify({ action: authMode, email: authEmail.trim(), username: authUsername.trim(), password: authPassword, confirmPassword: authConfirmation }) });
       setAccount(data.account); setAuthPassword('');
+      window.localStorage.setItem(SESSION_MARKER, crypto.randomUUID());
     } catch (cause) { setAuthError(cause instanceof Error ? cause.message : '暂时无法登录'); }
     finally { setAuthBusy(false); }
   };
   const logout = async () => {
-    await accountRequest('/api/auth', { method: 'DELETE' }).catch(() => {});
-    void t.stop(); stopSpeech(); setDialog(null); setAppMode(null); setAccount(null);
+    t.cancel(); coach.cancel(); stopSpeech();
+    const pending = accountRequest('/api/auth', { method: 'DELETE' });
+    try { await pending; setAccount(null); window.localStorage.setItem(SESSION_MARKER, crypto.randomUUID()); }
+    catch { setFormError('退出失败，请重试'); }
   };
   const install = async () => {
     if (!installEvent) { open('help'); return; }
@@ -409,7 +439,8 @@ export default function Home() {
     </form>
   </section></main>;
   if (account.status !== 'active') return <main className="access-page"><section className="access-card member-pending"><div className="access-mark"><ShieldCheck /></div><h1>{account.status === 'pending' ? '注册申请已提交' : account.status === 'expired' ? '会员已到期' : '账户已暂停'}</h1><p>{account.status === 'pending' ? '管理员激活会员后即可开始使用。' : '请联系管理员恢复账户。'}</p><strong>{account.email || account.username}</strong><Button className="form-submit" onClick={() => void accountRequest<{ account: AccountSnapshot | null }>('/api/auth').then(data => setAccount(data.account))}>刷新状态</Button><Button variant="ghost" onClick={() => void logout()}><LogOut />退出账户</Button></section></main>;
-  if (appMode === null) return <main className="mode-page"><section className="mode-card">{showOnboarding && <Onboarding onComplete={completeOnboarding}/>}<Image className="lucky-cat" src="/lucky-cat.webp" width={128} height={128} alt="Lucky cat" unoptimized /><p className="mode-brand">LUCKY</p><h1>What would you like to do?</h1><div className="member-summary"><span>{account.username} · {account.level.toUpperCase()}</span><strong>剩余 {duration(remaining)}</strong><small>云空间 {(account.storage.bytes / 1024 / 1024).toFixed(1)} / {(account.storage.limitBytes / 1024 / 1024).toFixed(0)} MB</small></div>{account.storage.warning && <button className="storage-warning" onClick={() => { setAppMode('translator'); queueMicrotask(() => open('history')); }}>云空间接近上限，请导出对话</button>}<div className="mode-options"><Button onClick={() => { setCoachEntryStage('chat'); setAppMode('coach'); if (coach.history.length === 0 && !coach.busy) void coach.beginSession(); }}><strong>English Coach</strong><span>Have a natural conversation and practise afterwards</span></Button><Button variant="outline" onClick={() => setAppMode('translator')}><strong>Translator</strong><span>Translate a live conversation in both directions</span></Button></div><div className="mode-account-actions"><Button variant="ghost" className="mode-settings" onClick={() => { setSettingsReturnMode(null); setAppMode('translator'); queueMicrotask(() => open('settings')); }}><Settings2 />设置</Button><Button variant="ghost" className="mode-settings" onClick={() => void logout()}><LogOut />退出</Button></div></section></main>;
+  if (!t.ready || !coach.ready) return <main className="access-page"><section className="access-card"><LoaderCircle className="spinning" /><p>{t.error || coach.error || 'Loading your conversations…'}</p>{(t.error || coach.error) && <Button onClick={() => window.location.reload()}>Retry</Button>}</section></main>;
+  if (appMode === null) return <main className="mode-page"><section className="mode-card">{showOnboarding && <Onboarding onComplete={completeOnboarding}/>}<Image className="lucky-cat" src="/lucky-cat.webp" width={128} height={128} alt="Lucky cat" unoptimized /><p className="mode-brand">LUCKY</p><h1>What would you like to do?</h1><div className="member-summary"><span>{account.username} · {account.level.toUpperCase()}</span><strong>剩余 {duration(remaining)}</strong><small>云空间 {(account.storage.bytes / 1024 / 1024).toFixed(1)} / {(account.storage.limitBytes / 1024 / 1024).toFixed(0)} MB · 云端保留 {account.storage.retentionMonths} 个月</small></div>{account.storage.warning && <button className="storage-warning" onClick={() => { setAppMode('translator'); queueMicrotask(() => open('history')); }}>云空间接近上限，请导出对话</button>}<div className="mode-options"><Button onClick={() => { setCoachEntryStage('chat'); setAppMode('coach'); if (coach.history.length === 0 && !coach.busy) void coach.beginSession(); }}><strong>English Coach</strong><span>Have a natural conversation and practise afterwards</span></Button><Button variant="outline" onClick={() => setAppMode('translator')}><strong>Translator</strong><span>Translate a live conversation in both directions</span></Button></div><div className="mode-account-actions"><Button variant="ghost" className="mode-settings" onClick={() => { setSettingsReturnMode(null); setAppMode('translator'); queueMicrotask(() => open('settings')); }}><Settings2 />设置</Button><Button variant="ghost" className="mode-settings" onClick={() => void logout()}><LogOut />退出</Button></div></section></main>;
   if (appMode === 'coach') return <CoachMode coach={coach} speaking={speaking} ieltsScore={ieltsScore} initialStage={coachEntryStage} onBack={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('chat'); setAppMode(null); }} onSettings={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('settings')); }} onIelts={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('ielts')); }} onSecurity={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('password')); }} onLogout={() => void logout()} onHowItWorks={() => { stopSpeech(); void coach.stopRecording(); setAppMode(null); queueMicrotask(() => setShowOnboarding(true)); }} onSpeak={text => void playSpeech(text, 'en')} />;
   return <main className="translator"><div className={`app-frame ${layoutMode === 'single-operator' ? 'single-operator' : ''}`}>
     {panelOrder.map((side, index) => <LanguagePanel key={side} controller={t} onHistory={() => open('history')} totals={{ ...t.usageTotals, dayCost: account.usage.todayCost, dayTokens: account.usage.todayTokens, monthCost: account.usage.monthCost, monthTokens: account.usage.monthTokens }} multiplier={account.costMultiplier} side={side} visualRow={layoutMode === 'single-operator' ? index + 1 : side === 0 ? 1 : 3} isSelf={side === selfSide} facingAway={layoutMode === 'face-to-face' && side === 0} showRecord={layoutMode === 'face-to-face'} ownName={ownName} pair={t.pair} entries={panelEntries[side]} locked={locked} canSpeak={true} onLanguage={t.changePair} onEdit={(id, text) => editSentence(side, id, text)} onSpeak={text => void playSpeech(text, t.pair[side])} onBeforeRecord={stopSpeech} onUsage={() => open('usage', side)} />)}

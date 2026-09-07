@@ -8,7 +8,7 @@ const strip = text => text.replace(/^import .*;\r?\n/gm,'').replace(/^export \{ 
 const url = text => 'data:text/javascript;base64,'+Buffer.from(ts.transpile(text,{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext})).toString('base64');
 const dbStub='const getDb=()=>globalThis.__securityDb;';
 const securityUrl=url(dbStub+strip(await read('../lib/server/auth-security.ts')));
-const authUrl=url(`import {digestToken,randomToken,ensureAuthTables,authError,validateNewPassword} from '${securityUrl}';`+dbStub+await read('../lib/membership-plans.ts')+strip(await read('../lib/server/auth.ts')));
+const authUrl=url(`import {digestToken,randomToken,ensureAuthTables,authError,validateNewPassword} from '${securityUrl}';`+'const accessIdentity=async()=>null;'+dbStub+await read('../lib/membership-plans.ts')+strip(await read('../lib/server/auth.ts')));
 const recoveryUrl=url(`import {hashPassword} from '${authUrl}'; import {authError,digestToken,ensureAuthTables,randomToken,validateNewPassword} from '${securityUrl}'; const getEmailSender=()=>globalThis.__securityEmail;`+dbStub+strip(await read('../lib/server/password-recovery.ts')));
 const security=await import(securityUrl), auth=await import(authUrl), recovery=await import(recoveryUrl);
 function database() {
@@ -46,21 +46,13 @@ test('password resets expire, consume once, preserve unrelated users and revoke 
   } finally {db.close();delete globalThis.__securityEmail;delete process.env.EMAIL_FROM;delete process.env.PUBLIC_APP_URL;}
 });
 
-test('admin password changes require old password, retain original until submission and invalidate old sessions',async()=>{
-  const db=database();process.env.ADMIN_PASSWORD='ExistingAdmin123';process.env.SUPER_ADMIN_PASSWORD='ExistingSuper123';
+test('legacy admin cookies no longer authenticate',async()=>{
+  const db=database();
   try {
-    const cookie=await auth.checkAdminPassword(request(),'ExistingAdmin123');assert.ok(cookie.includes('HttpOnly'));assert.ok(cookie.includes('Secure'));assert.ok(cookie.includes('SameSite=Strict'));
-    assert.equal(await auth.isAdmin(request(cookie.split(';')[0])),true);
-    await assert.rejects(auth.changeAdminPassword(request(),{currentPassword:'wrong',nextPassword:'NewAdmin123',confirmPassword:'NewAdmin123'}),{status:401});
-    assert.equal(await auth.isAdmin(request(cookie.split(';')[0])),true);
-    await assert.rejects(auth.changeAdminPassword(request(),{currentPassword:'ExistingAdmin123',nextPassword:'NewAdmin123',confirmPassword:'different123'}),{status:400});
-    const replacement=await auth.changeAdminPassword(request(),{currentPassword:'ExistingAdmin123',nextPassword:'NewAdmin123',confirmPassword:'NewAdmin123'});
-    assert.equal(await auth.isAdmin(request(cookie.split(';')[0])),false);assert.equal(await auth.isAdmin(request(replacement.split(';')[0])),true);
-    assert.equal(await auth.checkAdminPassword(request(),'ExistingAdmin123'),null);assert.ok(await auth.checkAdminPassword(request(),'NewAdmin123'));
-    assert.ok(await auth.checkSuperAdminPassword(request(),'ExistingSuper123'));
-    await auth.clearAdminCookie(request(replacement.split(';')[0]));assert.equal(await auth.isAdmin(request(replacement.split(';')[0])),false);
-    const expiring=await auth.checkAdminPassword(request(),'NewAdmin123');db.exec('UPDATE admin_sessions SET expires_at=0');assert.equal(await auth.isAdmin(request(expiring.split(';')[0])),false);
-  } finally {db.close();delete process.env.ADMIN_PASSWORD;delete process.env.SUPER_ADMIN_PASSWORD;}
+    assert.equal(await auth.isAdmin(request('lucky-admin=old-secret-derived-token')),false);
+    assert.equal(await auth.isSuperAdmin(request('lucky-super-admin=old-token')),false);
+    await assert.rejects(auth.requireAdmin(request('lucky-admin=old-token')),{status:401});
+  } finally {db.close();}
 });
 
 test('authentication attempts are limited across requests and password confirmation is mandatory',async()=>{

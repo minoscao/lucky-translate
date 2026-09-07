@@ -46,7 +46,7 @@ test('admin creation requires same origin and administrator access without issui
     const readJson=r=>r.json(),json=(body,status=200,headers={})=>Response.json(body,{status,headers});
     const requireAdmin=async()=>{if(!state.authorized)throw Object.assign(new Error('请先登录管理后台'),{status:401})};
     const createAccount=async()=>{state.calls++;return 'created-id'};
-    const recoveryConfigured=()=>false; const ensureBootstrap=async()=>{},accountSnapshot=async()=>({}),timeLedger=async()=>[],deepSeekConfigured=async()=>true,getCoachSkill=async()=>'',getTextTimeRules=async()=>({}),isSuperAdmin=async()=>false;
+    const getRetentionRules=async()=>({lv1:1,lv2:6,lv3:6}); const recoveryConfigured=()=>false; const ensureBootstrap=async()=>{},accountSnapshot=async()=>({}),timeLedger=async()=>[],deepSeekConfigured=async()=>true,getCoachSkill=async()=>'',getTextTimeRules=async()=>({}),isSuperAdmin=async()=>false;
     const getDb=()=>({prepare:()=>({all:async()=>({results:[]}),first:async()=>null})});`;
   const { POST } = await import(compile(mocks+source));
   const req=(origin='https://example.test')=>new Request('https://example.test/api/admin',{method:'POST',headers:{origin},body:JSON.stringify({action:'create_user',level:'lv1',status:'active'})});

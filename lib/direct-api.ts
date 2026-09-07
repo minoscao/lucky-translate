@@ -16,7 +16,7 @@ async function responseError(response: Response): Promise<never> {
 export async function verifyDirectKey() { throw new DirectApiError('服务密钥由管理员统一配置'); }
 
 export async function transcribeDirect(audio: Blob, _key: string, signal: AbortSignal) {
-  const response = await fetch('/api/transcribe', { method: 'POST', credentials: 'same-origin', body: audio, signal, headers: { 'Content-Type': audio.type || 'audio/wav' } });
+  const response = await fetch('/api/transcribe', { method: 'POST', credentials: 'same-origin', body: audio, signal, headers: { 'Content-Type': audio.type || 'audio/wav', 'X-Lucky-Account': _key } });
   if (!response.ok) return responseError(response);
   return response.json() as Promise<{ text: string; usage: DirectUsage }>;
 }
@@ -24,7 +24,7 @@ export async function transcribeDirect(audio: Blob, _key: string, signal: AbortS
 export async function translateDirect(input: { audio?: Blob; text?: string; pair: Pair; context: string[]; provider?: TranslationProvider; openaiKey?: string; deepseekKey?: string; signal: AbortSignal; onTranscribed?: (text: string) => void | Promise<void> }) {
   const form = new FormData(); form.set('upper', input.pair[0]); form.set('lower', input.pair[1]); form.set('context', JSON.stringify(input.context));
   if (input.audio) form.set('audio', input.audio, 'speech.wav'); else form.set('text', input.text || '');
-  const response = await fetch('/api/translate', { method: 'POST', credentials: 'same-origin', body: form, signal: input.signal });
+  const response = await fetch('/api/translate', { method: 'POST', credentials: 'same-origin', body: form, signal: input.signal, headers: { 'X-Lucky-Account': input.deepseekKey || '' } });
   if (!response.ok) return responseError(response);
   const result = await response.json() as { empty?: boolean; original?: string; upper?: string; lower?: string; model?: string; usage: DirectUsage };
   if (result.original) await input.onTranscribed?.(result.original);
@@ -33,8 +33,8 @@ export async function translateDirect(input: { audio?: Blob; text?: string; pair
   return { empty: false as const, original: result.original, upper: result.upper, lower: result.lower, model: result.model || 'deepseek-v4-flash', usage: result.usage };
 }
 
-export async function synthesizeSpeechDirect(input: { text: string; language: string; voiceId?: string; speed: number; key?: string; signal: AbortSignal }) {
-  const response = await fetch('/api/speech', { method: 'POST', credentials: 'same-origin', signal: input.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: input.text, language: input.language }) });
+export async function synthesizeSpeechDirect(input: { accountId: string; text: string; language: string; voiceId?: string; speed: number; key?: string; signal: AbortSignal }) {
+  const response = await fetch('/api/speech', { method: 'POST', credentials: 'same-origin', signal: input.signal, headers: { 'Content-Type': 'application/json', 'X-Lucky-Account': input.accountId }, body: JSON.stringify({ text: input.text, language: input.language }) });
   if (!response.ok) return responseError(response);
   return { audio: await response.blob(), usage: { tokens: Number(response.headers.get('X-Lucky-Usage-Tokens')) || 0, cost: Number(response.headers.get('X-Lucky-Usage-Cost')) || 0 } };
 }

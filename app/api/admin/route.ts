@@ -1,9 +1,11 @@
+import { getRetentionRules, setRetentionRules } from '@/lib/server/retention';
+import { accessConfig } from '@/lib/server/cloudflare-access';
 import { limitAuth } from '@/lib/server/auth-security';
 import { recoveryConfigured, sendEmailTest } from '@/lib/server/password-recovery';
 import { createAccount } from '@/lib/server/create-account';
 import { getDb } from '@/db';
 import { accountSnapshot } from '@/lib/server/account';
-import { Account, changeAdminPassword, checkAdminPassword, checkSuperAdminPassword, clearAdminCookie, ensureBootstrap, hashPassword, isAdmin, isSuperAdmin, PLAN_DEFAULTS, requireAdmin } from '@/lib/server/auth';
+import { Account, ensureBootstrap, hashPassword, isAdmin, isSuperAdmin, PLAN_DEFAULTS, requireAdmin } from '@/lib/server/auth';
 import { deepSeekConfigured, getCoachSkill, setCoachSkill, setDeepSeekKey } from '@/lib/server/config';
 import { json, readJson, sameOrigin } from '@/lib/server/http';
 import { getTextTimeRules, refundLegacyTime, setTextTimeRules, timeLedger } from '@/lib/server/text-time';
@@ -19,14 +21,14 @@ async function dashboard(request?: Request, businessUnlocked?: boolean) {
     FROM payments p JOIN users u ON u.id = p.user_id ORDER BY p.paid_at DESC`).all();
   const multiplier = await getDb().prepare("SELECT value FROM app_config WHERE key = 'cost_multiplier'").first<{ value: string }>();
   return {
-    recoveryConfigured: recoveryConfigured(), users, prices: prices.results, history: history.results, payments: payments.results,
+    retentionRules: await getRetentionRules(), recoveryConfigured: recoveryConfigured(), users, prices: prices.results, history: history.results, payments: payments.results,
     deepseekConfigured: await deepSeekConfigured(), costMultiplier: Math.max(.1, Math.min(100, Number(multiplier?.value) || 1)),
     coachSkill: await getCoachSkill(), timeRules: await getTextTimeRules(), businessUnlocked: businessUnlocked ?? (request ? await isSuperAdmin(request) : false),
   };
 }
 
 export async function GET(request: Request) {
-  try { if (!await isAdmin(request)) return json({ authenticated: false }, 401); return json({ authenticated: true, ...(await dashboard(request)) }); }
+  try { if (!await isAdmin(request)) return json({ authenticated: false, accessConfigured: Boolean(accessConfig()) }, 401); return json({ authenticated: true, ...(await dashboard(request)) }); }
   catch (error) { return json({ error: error instanceof Error ? error.message : '无法打开管理后台' }, (error as { status?: number }).status || 500); }
 }
 
@@ -34,22 +36,12 @@ export async function POST(request: Request) {
   if (!sameOrigin(request)) return json({ error: '请从管理后台操作' }, 403);
   try {
     const body = await readJson<Record<string, unknown>>(request);
-    if (body.action === 'login') {
-      await limitAuth(request, 'admin-login');
-      const cookie = await checkAdminPassword(request, typeof body.password === 'string' ? body.password : '');
-      if (!cookie) return json({ error: '管理密码不正确' }, 401);
-      return json({ authenticated: true, ...(await dashboard(request)) }, 200, { 'Set-Cookie': cookie });
-    }
+    if (body.action === 'login' || body.action === 'change_admin_password' || body.action === 'unlock_business') return json({ error: '密码入口已停用，请通过 Cloudflare 验证' }, 410);
     await requireAdmin(request);
     if (body.action === 'test_email') {
       await limitAuth(request, 'admin-test-email', '', 5, 30);
       await sendEmailTest(typeof body.email === 'string' ? body.email.trim() : '');
       return json({ authenticated: true, sent: true });
-    }
-    if (body.action === 'change_admin_password') {
-      await limitAuth(request, 'admin-change-password');
-      const cookie = await changeAdminPassword(request,body);
-      return json({authenticated:true,saved:true,...(await dashboard(request))},200,{'Set-Cookie':cookie});
     }
     if (body.action === 'create_user') {
       if (body.level !== 'lv1' && body.level !== 'lv2' && body.level !== 'lv3') return json({ error: '请选择会员等级' }, 400);
@@ -63,6 +55,7 @@ export async function POST(request: Request) {
       await refundLegacyTime(account, typeof body.day === 'string' ? body.day : '');
       return json({ authenticated: true, saved: true, ...(await dashboard(request)) });
     }
+    if (body.action === 'set_retention_rules') { await setRetentionRules(body.rules); return json({ authenticated: true, saved: true, ...(await dashboard(request)) }); }
     if (body.action === 'set_text_time_rules') {
       await setTextTimeRules(body.rules);
       return json({ authenticated: true, saved: true, ...(await dashboard(request)) });
@@ -97,12 +90,6 @@ export async function POST(request: Request) {
       await getDb().prepare('UPDATE users SET password_hash = ?1, updated_at = ?2 WHERE id = ?3').bind(await hashPassword(password), Date.now(), id).run();
       return json({ authenticated: true, saved: true, ...(await dashboard(request)) });
     }
-    if (body.action === 'unlock_business') {
-      await limitAuth(request, 'super-admin-login');
-      const cookie = await checkSuperAdminPassword(request, typeof body.password === 'string' ? body.password : '');
-      if (!cookie) return json({ error: '超级管理员密码不正确' }, 403);
-      return json({ authenticated: true, ...(await dashboard(request, true)) }, 200, { 'Set-Cookie': cookie });
-    }
     if (body.action === 'update_coach_skill') {
       if (!await isSuperAdmin(request)) return json({ error: '请先验证超级管理员密码' }, 403);
       await setCoachSkill(typeof body.skill === 'string' ? body.skill : '');
@@ -124,4 +111,4 @@ export async function POST(request: Request) {
   } catch (error) { return json({ error: error instanceof Error ? error.message : '管理操作失败' }, (error as { status?: number }).status || 500); }
 }
 
-export async function DELETE(request: Request) { if(!sameOrigin(request)) return json({error:'请从管理后台操作'},403); return json({ authenticated: false }, 200, { 'Set-Cookie': await clearAdminCookie(request) }); }
+export async function DELETE(request: Request) { if (!sameOrigin(request)) return json({ error: '请从管理后台操作' }, 403); return json({ logoutUrl: '/cdn-cgi/access/logout' }); }

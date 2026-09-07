@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { createConversationStore, language, Pair, RecordGesture, RecordMode, Speaker, Translation } from '@/lib/translation';
 import { VoiceRecorder } from '@/lib/voice-recorder';
 import { translateDirect, TranslationProvider } from '@/lib/direct-api';
-import { saveCloudRecord } from '@/lib/account';
+import { AccountScope } from '@/lib/account-scope';
 
 type Job = { id?: number; audio?: Blob; text?: string; pair: Pair; replaceId?: number; speaker: Speaker; sourceSide?: 0 | 1; autoSpeakSide?: 0 | 1 };
 type PendingTurn = { id: number; sourceSide: 0 | 1; speaker: Speaker; text: string };
@@ -17,7 +17,10 @@ const currentMonth = () => {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 };
 const emptyUsageTotals = (): UsageTotals => ({ day: currentDay(), dayTokens: 0, dayCost: 0, month: currentMonth(), monthTokens: 0, monthCost: 0, totalTokens: 0, totalCost: 0 });
-export function useTranslator() {
+export function useTranslator(scope: AccountScope) {
+  const localStorage = scope.storage, fetch = scope.fetch, saveCloudRecord = scope.save;
+  const [ready, setReady] = useState(false);
+  const hydrated = useRef(false);
   const [pair, setPair] = useState<Pair>(['en', 'zh-CN']);
   const [selfOnTop, setSelfOnTop] = useState(false);
   const [mode, setMode] = useState<RecordMode>('idle');
@@ -26,7 +29,7 @@ export function useTranslator() {
   const [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [conversation] = useState(createConversationStore);
   const history = useSyncExternalStore(conversation.subscribe, conversation.snapshot, conversation.snapshot);
-  const [openaiKey] = useState(''), [deepseekKey] = useState('managed');
+  const [openaiKey] = useState(''), [deepseekKey] = useState(scope.owner);
   const [translationProvider] = useState<TranslationProvider>('deepseek');
   const [usage, setUsage] = useState({ tokens: 0, cost: 0 });
   const [usageTotals, setUsageTotals] = useState<UsageTotals>(emptyUsageTotals);
@@ -100,6 +103,7 @@ export function useTranslator() {
         addUsage(data.usage.tokens, data.usage.cost);
         const saved = { ...result, id: job.replaceId ?? result.id };
         if (job.replaceId !== undefined) conversation.replace(job.replaceId, saved); else conversation.append(saved);
+        try { localStorage.setItem('lucky-translations', JSON.stringify(conversation.snapshot())); } catch {}
         void saveCloudRecord(`translation-${saved.id}`, 'translation', saved).then(({ account }) => { if (account.storage.warning) setNotice('云空间即将用满，请尽快导出完整对话'); }).catch(() => {});
         if (job.id !== undefined) setPendingTurns(current => current.filter(item => item.id !== job.id));
         if (job.autoSpeakSide !== undefined) {
@@ -124,11 +128,13 @@ export function useTranslator() {
   }, [stop, conversation, addUsage]);
   useEffect(() => { pumpRef.current = pump; }, [pump]);
   const enqueue = useCallback((job: Job) => {
+    if (!scope.active || !hydrated.current) return;
     if (queue.current.length >= 4) { setError('翻译暂时跟不上，已停止录音；最后一句未发送，请稍后重说'); void stop(false); return; }
     queue.current.push(job); setPending(queue.current.length + (pumping.current ? 1 : 0)); pumpRef.current();
   }, [stop]);
   const speakerForSide = (side: 0 | 1): Speaker => (live.current.selfOnTop ? side === 0 : side === 1) ? 'self' : 'other';
   const start = async (side: 0 | 1, autoSpeakSide?: 0 | 1, detectSpeaker = true) => {
+    if (!scope.active || !hydrated.current) return;
     const translationKey = live.current.translationProvider === 'deepseek' ? live.current.deepseekKey : live.current.openaiKey;
     if (!translationKey.trim()) { gesture.current.cancel(); sync(); setError('翻译服务尚未连接，请联系管理员'); return; }
     if (!navigator.onLine) { gesture.current.cancel(); sync(); setError('当前没有网络，请联网后再试'); return; }
@@ -167,7 +173,9 @@ export function useTranslator() {
     clearTimeout(holdTimer.current); clearTimeout(limitTimer.current); window.speechSynthesis?.cancel();
   }, []);
   useEffect(() => {
+    if (!scope.owner) return;
     mounted.current = true;
+    const hydration = new AbortController();
     const currentRecorder = new VoiceRecorder({
       onSentence: (audio, boundary) => {
         if (!mounted.current || document.hidden) return;
@@ -193,20 +201,21 @@ export function useTranslator() {
           setUsageTotals({ day, dayTokens: validDay ? savedUsage.dayTokens! : 0, dayCost: validDay ? savedUsage.dayCost! : 0, month, monthTokens: savedUsage.month === month ? savedUsage.monthTokens! : 0, monthCost: savedUsage.month === month ? savedUsage.monthCost! : 0, totalTokens: savedUsage.totalTokens!, totalCost: savedUsage.totalCost! });
         }
       } catch {}
-      void fetch('/api/cloud?type=translation', { credentials: 'same-origin' }).then(async response => response.ok ? await response.json() as { records?: Array<{ data: Translation }> } : null).then(payload => {
-        const records = payload?.records?.map(record => record.data).filter(item => item && typeof item.id === 'number' && typeof item.original === 'string').sort((a, b) => a.id - b.id);
-        if (records?.length) conversation.replaceAll(records.slice(-2000));
-      }).catch(() => {});
-      void fetch('/api/cloud?type=preferences', { credentials: 'same-origin' }).then(async response => response.ok ? await response.json() as { records?: Array<{ data: { pair?: Pair; selfOnTop?: boolean } }> } : null).then(payload => {
-        const saved = payload?.records?.at(-1)?.data;
+      void scope.request<{ records: Array<{ type: string; data: unknown }> }>('/api/cloud', { signal: hydration.signal }).then(payload => {
+        if (!mounted.current || hydration.signal.aborted || !scope.active) return;
+        const records = payload.records.filter(record => record.type === 'translation').map(record => record.data as Translation).filter(item => item && typeof item.id === 'number' && typeof item.original === 'string').sort((a, b) => a.id - b.id);
+        conversation.replaceAll(records.slice(-2000));
+        try { localStorage.setItem('lucky-translations', JSON.stringify(records.slice(-2000))); } catch {}
+        const saved = payload.records.find(record => record.type === 'preferences')?.data as { pair?: Pair; selfOnTop?: boolean } | undefined;
         if (saved && Array.isArray(saved.pair) && saved.pair.length === 2 && saved.pair[0] !== saved.pair[1] && saved.pair.every(code => language(code))) { setPair(saved.pair); setSelfOnTop(Boolean(saved.selfOnTop)); }
-      }).catch(() => {});
+        hydrated.current = true; setReady(true);
+      }).catch(cause => { if (!hydration.signal.aborted && scope.active) setError(cause instanceof Error ? cause.message : '无法读取你的云端记录，请重试'); });
     });
     const leave = () => { cancel(); setNotice('已暂停，长按或双击可继续'); };
     const visibility = () => { if (document.hidden) leave(); };
     const offline = () => { cancel(); setError('网络已断开，请联网后重试'); };
     document.addEventListener('visibilitychange', visibility); window.addEventListener('pagehide', leave); window.addEventListener('offline', offline);
-    return () => { dispose(); void currentRecorder.stop(false); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('pagehide', leave); window.removeEventListener('offline', offline); };
+    return () => { hydration.abort(); hydrated.current = false; dispose(); void currentRecorder.stop(false); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('pagehide', leave); window.removeEventListener('offline', offline); };
   }, [cancel, conversation, enqueue, stop, dispose]);
   const changePair = (value: Pair) => {
     if (mode !== 'idle' || pending || phase !== 'ready') return;
@@ -215,7 +224,7 @@ export function useTranslator() {
     void saveCloudRecord('preferences', 'preferences', { pair: value, selfOnTop }).catch(() => {});
   };
   return {
-    pair, selfOnTop, changePair, mode, phase, level, pending, pendingTurns, error, notice, history, openaiKey, deepseekKey, translationProvider, usage, usageTotals, multiplier, autoSpeech, addUsage,
+    ready, cancel, pair, selfOnTop, changePair, mode, phase, level, pending, pendingTurns, error, notice, history, openaiKey, deepseekKey, translationProvider, usage, usageTotals, multiplier, autoSpeech, addUsage,
     canTranslate: true,
     setMultiplier: (value: number) => { if (!Number.isFinite(value) || value < .1 || value > 100) return; setMultiplier(value); try { localStorage.setItem('lucky-price-multiplier', String(value)); } catch {} },
     swapSides: () => {

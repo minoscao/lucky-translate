@@ -1,12 +1,9 @@
-import { digestToken, randomToken, ensureAuthTables, authError, validateNewPassword } from '@/lib/server/auth-security';
+import { authError } from '@/lib/server/auth-security';
+import { accessIdentity } from '@/lib/server/cloudflare-access';
 import { PLAN_DEFAULTS } from '@/lib/membership-plans';
 import { getDb } from '@/db';
 
 const SESSION_COOKIE = 'lucky-session';
-const ADMIN_COOKIE = 'lucky-admin';
-const SUPER_ADMIN_COOKIE = 'lucky-super-admin';
-const ADMIN_PASSWORD = () => { const value = process.env.ADMIN_PASSWORD; if (!value) throw authError('管理员登录尚未配置', 503); return value; };
-const SUPER_ADMIN_PASSWORD = () => { const value = process.env.SUPER_ADMIN_PASSWORD; if (!value) throw authError('管理员登录尚未配置', 503); return value; };
 const encoder = new TextEncoder();
 
 export type Account = {
@@ -55,16 +52,6 @@ function sessionCookie(request: Request, token: string, maxAge = 30 * 86400) {
   return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly;${secure} SameSite=Strict; Max-Age=${maxAge}`;
 }
 
-function adminCookie(request: Request, token: string, maxAge = 8 * 3600) {
-  const secure = new URL(request.url).protocol === 'https:' ? ' Secure;' : '';
-  return `${ADMIN_COOKIE}=${token}; Path=/; HttpOnly;${secure} SameSite=Strict; Max-Age=${maxAge}`;
-}
-
-function superAdminCookie(request: Request, token: string, maxAge = 30 * 60) {
-  const secure = new URL(request.url).protocol === 'https:' ? ' Secure;' : '';
-  return `${SUPER_ADMIN_COOKIE}=${token}; Path=/; HttpOnly;${secure} SameSite=Strict; Max-Age=${maxAge}`;
-}
-
 export { PLAN_DEFAULTS } from '@/lib/membership-plans';
 
 export async function ensureBootstrap() {
@@ -89,11 +76,14 @@ export async function getAccount(request: Request) {
   const raw = cookie(request, SESSION_COOKIE); if (!raw) return null;
   const tokenHash = await sha256(raw), now = Date.now();
   const account = await getDb().prepare(`SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?1 AND s.expires_at > ?2 LIMIT 1`).bind(tokenHash, now).first<Account>();
+  const expected = request.headers.get('X-Lucky-Account');
+  if (expected && expected !== account?.id) throw authError('账户已切换，请重新打开当前页面', 409);
   return account || null;
 }
 
 export async function requireAccount(request: Request, active = true) {
   const account = await getAccount(request);
+  if (!request.headers.get('X-Lucky-Account')) throw authError('页面已更新，请刷新后继续使用', 409);
   if (!account) throw Object.assign(new Error('请先登录'), { status: 401 });
   const expired = account.membership_expires_at !== null && account.membership_expires_at < Date.now();
   if (active && (account.status !== 'active' || account.level === 'pending' || expired)) throw Object.assign(new Error(expired ? '会员已到期，请联系管理员续费' : '账户等待管理员激活'), { status: 403 });
@@ -118,51 +108,7 @@ export async function destroySession(request: Request) {
   return sessionCookie(request, '', 0);
 }
 
-type AdminRole = 'admin' | 'super';
-async function credential(role: AdminRole) {
-  const row = await getDb().prepare('SELECT value FROM app_config WHERE key = ?1').bind(`${role}_password_hash`).first<{ value: string }>();
-  return row?.value || null;
-}
-async function verifyAdminPassword(role: AdminRole, password: string) {
-  const stored = await credential(role);
-  return stored ? verifyPassword(password, stored) : safeEqual(password, role === 'admin' ? ADMIN_PASSWORD() : SUPER_ADMIN_PASSWORD());
-}
-async function issueAdminSession(request: Request, role: AdminRole) {
-  await ensureAuthTables();
-  const token = randomToken(), expires = Date.now() + (role === 'admin' ? 8 * 3600_000 : 30 * 60_000);
-  await getDb().prepare('INSERT INTO admin_sessions(token_hash,role,expires_at) VALUES (?1,?2,?3)').bind(await digestToken(token), role, expires).run();
-  return role === 'admin' ? adminCookie(request, token) : superAdminCookie(request, token);
-}
-async function hasAdminSession(request: Request, role: AdminRole) {
-  const token = cookie(request, role === 'admin' ? ADMIN_COOKIE : SUPER_ADMIN_COOKIE);
-  if (!token) return false;
-  await ensureAuthTables();
-  return Boolean(await getDb().prepare('SELECT 1 ok FROM admin_sessions WHERE token_hash=?1 AND role=?2 AND expires_at>?3').bind(await digestToken(token), role, Date.now()).first());
-}
-export async function isAdmin(request: Request) { return hasAdminSession(request, 'admin'); }
-export async function requireAdmin(request: Request) { if (!await isAdmin(request)) throw authError('请先登录管理后台', 401); }
-export async function checkAdminPassword(request: Request, password: string) {
-  if (!await verifyAdminPassword('admin', password)) return null;
-  return issueAdminSession(request, 'admin');
-}
-export async function clearAdminCookie(request: Request) {
-  await ensureAuthTables();
-  await getDb().prepare('DELETE FROM admin_sessions WHERE token_hash IN (?1,?2)').bind(await digestToken(cookie(request,ADMIN_COOKIE)), await digestToken(cookie(request,SUPER_ADMIN_COOKIE))).run();
-  return adminCookie(request, '', 0);
-}
-export async function isSuperAdmin(request: Request) { return hasAdminSession(request, 'super'); }
-export async function checkSuperAdminPassword(request: Request, password: string) {
-  if (!await verifyAdminPassword('super', password)) return null;
-  return issueAdminSession(request, 'super');
-}
-export async function changeAdminPassword(request: Request, body: Record<string, unknown>) {
-  const role: AdminRole = body.role === 'super' ? 'super' : 'admin';
-  const next = validateNewPassword(body.nextPassword, body.confirmPassword);
-  if (typeof body.currentPassword !== 'string' || !await verifyAdminPassword(role, body.currentPassword)) throw authError('当前密码不正确', 401);
-  await ensureAuthTables();
-  await getDb().batch([
-    getDb().prepare('INSERT INTO app_config(key,value,updated_at) VALUES (?1,?2,?3) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at').bind(`${role}_password_hash`, await hashPassword(next), Date.now()),
-    getDb().prepare('DELETE FROM admin_sessions WHERE role=?1').bind(role),
-  ]);
-  return issueAdminSession(request, role);
-}
+// Administrative identity is exclusively verified by Cloudflare Access.
+export async function isAdmin(request: Request) { return Boolean(await accessIdentity(request)); }
+export async function isSuperAdmin(request: Request) { return Boolean((await accessIdentity(request))?.superAdmin); }
+export async function requireAdmin(request: Request) { if (!await isAdmin(request)) throw authError('请通过 Cloudflare 验证后进入管理后台', 401); }

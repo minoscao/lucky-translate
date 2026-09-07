@@ -1,5 +1,5 @@
 export type CoachRole = 'learner' | 'coach';
-export type CoachMessage = { id: number; role: CoachRole; text: string };
+export type CoachMessage = { id: number; role: CoachRole; text: string; createdAt?: number };
 export type CoachMemory = { level: string; topics: string[]; strengths: string[]; focus: string[]; phrases: string[] };
 export type CoachExercise = {
   type: 'cloze' | 'meaning' | 'grammar'; prompt: string; answer: string;
@@ -47,7 +47,7 @@ async function coachRequest<T>(_key: string, messages: Array<{ role: 'system' | 
   let response: Response;
   try {
     response = await fetch('/api/coach', {
-      method: 'POST', credentials: 'same-origin', signal, headers: { 'Content-Type': 'application/json' },
+      method: 'POST', credentials: 'same-origin', signal, headers: { 'Content-Type': 'application/json', 'X-Lucky-Account': _key },
       body: JSON.stringify({ messages, maxTokens: 1800, voiceMode }),
     });
   } catch { throw new Error('无法连接 English Coach，请检查网络'); }
