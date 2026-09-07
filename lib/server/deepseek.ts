@@ -4,7 +4,7 @@ import { getDeepSeekKey } from './config';
 
 export type DeepSeekMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
-export async function deepSeekJson(account: Account, feature: string, messages: DeepSeekMessage[], signal: AbortSignal, maxTokens = 3000, tokenMultiplier = 1) {
+export async function deepSeekJson(account: Account, feature: string, messages: DeepSeekMessage[], signal: AbortSignal, maxTokens = 3000, tokenMultiplier = 1, validate?: (content: string) => void) {
   await enforceLimits(account); const key = await getDeepSeekKey();
   const response = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST', redirect: 'manual', signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]),
@@ -18,8 +18,15 @@ export async function deepSeekJson(account: Account, feature: string, messages: 
   }
   const result = await response.json() as { choices?: Array<{ finish_reason?: string; message?: { content?: string } }>; usage?: Parameters<typeof recordDeepSeekUsage>[2] };
   const content = result.choices?.[0]?.message?.content;
-  if (!content) throw Object.assign(new Error('没有收到完整内容，请重试'), { status: 502 });
+  try {
+    if (!content || result.choices?.[0]?.finish_reason === 'length') throw new Error('incomplete');
+    validate?.(content);
+  } catch {
+    // Preserve provider costs while charging no customer quota for unusable output.
+    await recordDeepSeekUsage(account, feature, result.usage, tokenMultiplier, false);
+    console.warn('Model output rejected', { finishReason: result.choices?.[0]?.finish_reason, characters: content?.length || 0 });
+    throw Object.assign(new Error('回复未完整生成，请重试。本次未扣除 Points 或服务额度。'), { status: 502 });
+  }
   const usage = await recordDeepSeekUsage(account, feature, result.usage, tokenMultiplier);
-  if (result.choices?.[0]?.finish_reason === 'length') throw Object.assign(new Error('回复未生成完整，请重试。本次未扣除对话 Points。'), { status: 502 });
   return { content, usage };
 }

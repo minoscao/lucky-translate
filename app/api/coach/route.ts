@@ -19,7 +19,14 @@ export async function POST(request: Request) {
     if (messages[0]?.role === 'system' && messages[0].content.includes('affectionate and adaptive English conversation coach')) {
       messages[0] = { role: 'system', content: await getCoachSkill() };
     }
-    const result = await deepSeekJson(account, '英语训练', messages, request.signal, Math.max(200, Math.min(3000, Number(body.maxTokens) || 1800)), body.voiceMode === true ? 2 : 1);
+    const validate = (content: string) => {
+      let parsed: Record<string, unknown>;
+      try { parsed = parseCoachContent(content); }
+      catch { console.warn('Coach invalid JSON', { characters: content.length }); throw new Error('invalid_json'); }
+      try { coachTimeBasis(messages, parsed); }
+      catch { console.warn('Coach unexpected response fields', { fields: Object.entries(parsed).map(([key, value]) => `${key.slice(0, 40)}:${Array.isArray(value) ? 'array' : typeof value}`).slice(0, 12) }); throw new Error('invalid_fields'); }
+    };
+    const result = await deepSeekJson(account, '英语训练', messages, request.signal, Math.max(200, Math.min(3000, Number(body.maxTokens) || 1800)), body.voiceMode === true ? 2 : 1, validate);
     let parsed: Record<string, unknown>, basis: ReturnType<typeof coachTimeBasis>;
     try { parsed = parseCoachContent(result.content); basis = coachTimeBasis(messages, parsed); }
     catch { console.warn('Coach response validation failed', { characters: result.content.length }); return json({ error: 'Lucky 的回复未完整生成，请重试。本次未扣除对话 Points。' }, 502); }

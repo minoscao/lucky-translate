@@ -119,7 +119,7 @@ test('voice interactions use two times the customer Token allowance while preser
     readFile(new URL('../app/api/translate/route.ts', import.meta.url), 'utf8'),
     readFile(new URL('../app/api/coach/route.ts', import.meta.url), 'utf8'),
   ]);
-  assert.match(account, /chargedTokens = Math\.ceil\(tokens \* multiplier\)/);
+  assert.match(account, /chargedTokens = billable \? Math\.ceil\(tokens \* multiplier\) : 0/);
   assert.match(account, /actualTokens: tokens, tokenMultiplier: multiplier/);
   assert.match(translate, /audio instanceof File \? 2 : 1/);
   assert.match(coach, /body\.voiceMode === true \? 2 : 1/);
