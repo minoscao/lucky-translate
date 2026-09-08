@@ -8,7 +8,7 @@ const encoder = new TextEncoder();
 
 export type Account = {
   id: string; username: string; email: string | null; status: string; level: string;
-  daily_seconds_limit: number; monthly_seconds_limit: number; daily_token_limit: number;
+  daily_seconds_limit: number; monthly_seconds_limit: number; daily_token_limit: number; monthly_token_limit: number;
   monthly_price_cents: number; storage_limit_bytes: number; membership_expires_at: number | null;
   created_at: number; updated_at: number; last_login_at: number | null; admin_note: string;
 };

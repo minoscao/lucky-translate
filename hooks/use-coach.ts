@@ -41,7 +41,7 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
   const recorder = useRef<VoiceRecorder | undefined>(undefined), abort = useRef<AbortController | undefined>(undefined), keyRef = useRef(scope.owner), usageRef = useRef(addUsage), ieltsScoreRef = useRef(ieltsScore);
   const historyRef = useRef<CoachMessage[]>([]), memoryRef = useRef<CoachMemory>(EMPTY_COACH_MEMORY), busyRef = useRef(false), recordingRef = useRef(false), journalRef = useRef<CoachJournal>(emptyJournal());
   const cloudReady = useRef(false);
-  const messageId = useRef(0), speechId = useRef(0);
+  const messageId = useRef(0), speechId = useRef(0), recordingAttempt = useRef(0);
   usageRef.current = addUsage;
   ieltsScoreRef.current = ieltsScore;
   const setBusyState = (value: boolean) => { busyRef.current = value; setBusy(value); };
@@ -91,7 +91,7 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
     if (!cloudReady.current || !scope.active) return false;
     abort.current?.abort(); const controller = new AbortController(); abort.current = controller; setBusyState(true); setError(''); setTip('');
     try {
-      const result = await coachReplyDirect({ key: keyRef.current, history: messages, memory: nextMemory, turnStatus, newSession, voiceMode: true, signal: controller.signal });
+      const result = await coachReplyDirect({ key: keyRef.current, history: messages, memory: nextMemory, turnStatus, newSession, signal: controller.signal });
       if (controller.signal.aborted || !scope.active) return false;
       const reply = result.data.reply.trim(); if (!reply) throw new Error('English Coach 没有返回回复');
       const responseMemory = result.data.memory;
@@ -134,10 +134,12 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
   const beginSession = useCallback(async () => { abort.current?.abort(); setPractice(undefined); updateHistory([]); setTip(''); return requestReply([], memoryRef.current, 'new session', true); }, [requestReply]);
   const startRecording = useCallback(async () => {
     if (!cloudReady.current || !scope.active || busyRef.current || recordingRef.current) return false;
-    setError(''); const started = await recorder.current?.start('hold', false).catch(cause => { setError(cause instanceof Error ? cause.message : '无法开启麦克风'); return false; });
+    const attempt = ++recordingAttempt.current; setRecordingState(true);
+    setError(''); const started = await recorder.current?.start('hold', false).catch(cause => { if (attempt === recordingAttempt.current && scope.active) setError(cause instanceof Error ? cause.message : '无法开启麦克风'); return false; });
+    if (attempt !== recordingAttempt.current || !scope.active) return false;
     setRecordingState(Boolean(started)); return Boolean(started);
   }, []);
-  const stopRecording = useCallback(async () => { if (!recordingRef.current) return; setRecordingState(false); await recorder.current?.stop(); }, []);
+  const stopRecording = useCallback(async (commit = true) => { recordingAttempt.current++; setRecordingState(false); await recorder.current?.stop(commit); }, []);
   const createPractice = useCallback(async () => {
     if (!cloudReady.current || !scope.active || busyRef.current) return false;
     const controller = new AbortController(); abort.current = controller; setBusyState(true); setError('');
@@ -181,7 +183,7 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
     finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
   }, [saveJournal]);
   return {
-    ready, cancel: () => { abort.current?.abort(); void recorder.current?.stop(false); setRecordingState(false); },
+    ready, cancel: () => { abort.current?.abort(); void stopRecording(false); },
     history, memory, busy, recording, error, tip, practice, speechRequest,
     todaySeconds: journal.todayDate === dateKey() ? journal.todaySeconds : 0, totalPracticeSeconds: totalPracticeSeconds(journal), latestAssessment: journal.assessment, eligibleForAssessment: totalPracticeSeconds(journal) >= 7200,
     dailySummaries: journal.daily, weeklySummaries: journal.weekly,

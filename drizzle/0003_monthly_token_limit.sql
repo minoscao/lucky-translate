@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `monthly_token_limit` integer DEFAULT 0 NOT NULL;

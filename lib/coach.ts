@@ -7,7 +7,7 @@ export type CoachExercise = {
 };
 export type CoachUsage = { tokens: number; cost: number; time?: { chargedSeconds: number; trainingTodaySeconds: number; trainingTotalSeconds: number } };
 export type CoachVocabulary = { word: string; definition: string };
-export type CoachGrammar = { point: string; example: string };
+export type CoachGrammar = { point: string; example: string; highlights?: string[] };
 export type CoachMistake = { original: string; better: string; reason: string; confidence: 'confirmed' };
 export type CoachDailySummary = {
   id: string; date: string; minutes: number; overview: string; mainFocus: string[];
@@ -23,7 +23,9 @@ export type CoachLevelAssessment = {
 
 export const EMPTY_COACH_MEMORY: CoachMemory = { level: 'discovering', topics: [], strengths: [], focus: [], phrases: [] };
 
-export const COACH_RESPONSE_CONTRACT = `Return one JSON object only, with a string reply, a short string tip, and a memory object containing level plus topics, strengths, focus, and phrases arrays. Do not use Markdown or add any text outside the JSON object.`;
+export const COACH_RESPONSE_CONTRACT = `Return one JSON object only. Use these exact top-level keys and value types:
+{"reply":"Your spoken response to the learner","tip":"A short optional tip, or an empty string","memory":{"level":"discovering","topics":[],"strengths":[],"focus":[],"phrases":[]}}
+The reply must be a nonempty string, never an object or an array. Put the actual conversation response in reply. Update memory only from supported learner evidence; empty arrays are valid. Do not return the schema itself. Do not use Markdown fences or add text outside the JSON object.`;
 
 export const DEFAULT_COACH_SKILL = `You are Lucky, an affectionate and adaptive English conversation coach. Practice is in English only. Follow the learner's real topic and latest clear intent. This is a natural conversation, never a quiz, test, or grammar lecture. Respond to the meaning first and leave most of the speaking opportunity to the learner.
 Treat a self-reported level or IELTS score as a starting point and verify it across several turns. Adapt chiefly to the learner's actual clear turns: their length, comprehension, vocabulary range, and whether they can continue without help. For IELTS 1–3, keep every turn to one tiny idea: one short response and at most one easy question, using familiar words and usually 8–18 words total. For IELTS 4–5, keep replies concise, ask one question at a time, and add detail only after the learner handles the previous turn comfortably. For IELTS 6 or above, use richer language and deeper questions by default. Never lower the assumed level because of one short answer or one transcription-looking mistake, and never make a low-level learner feel tested or overwhelmed. Increase complexity gradually only when several clear turns show readiness. Introduce a few precise, useful expressions naturally in context and explain them in simple English when asked.
@@ -43,12 +45,12 @@ const memorySchema = {
   },
 };
 
-async function coachRequest<T>(_key: string, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, _schemaName: string, _schema: object, signal: AbortSignal, voiceMode = false): Promise<{ data: T; usage: CoachUsage }> {
+async function coachRequest<T>(_key: string, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, _schemaName: string, _schema: object, signal: AbortSignal): Promise<{ data: T; usage: CoachUsage }> {
   let response: Response;
   try {
     response = await fetch('/api/coach', {
       method: 'POST', credentials: 'same-origin', signal, headers: { 'Content-Type': 'application/json', 'X-Lucky-Account': _key },
-      body: JSON.stringify({ messages: messages.map((message, index) => index === 0 ? { ...message, content: `${message.content}\n\nRequired JSON response schema: ${JSON.stringify(_schema)}` } : message), maxTokens: 1800, voiceMode }),
+      body: JSON.stringify({ messages: messages.map((message, index) => index === 0 ? { ...message, content: `${message.content}\n\nRequired JSON response schema: ${JSON.stringify(_schema)}` } : message), maxTokens: 1800 }),
     });
   } catch { throw new Error('无法连接 English Coach，请检查网络'); }
   if (!response.ok) {
@@ -64,16 +66,16 @@ async function coachRequest<T>(_key: string, messages: Array<{ role: 'system' | 
   catch { throw new Error('English Coach 返回内容不完整，请重试'); }
 }
 
-export async function coachReplyDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; turnStatus: string; newSession?: boolean; voiceMode?: boolean; signal: AbortSignal }) {
+export async function coachReplyDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; turnStatus: string; newSession?: boolean; signal: AbortSignal }) {
   const schema = {
     type: 'object', additionalProperties: false, required: ['reply', 'tip', 'memory'],
     properties: { reply: { type: 'string' }, tip: { type: 'string' }, memory: memorySchema },
   };
-  const history = input.history.slice(-12).map(message => ({ role: message.role === 'coach' ? 'assistant' as const : 'user' as const, content: message.text.slice(0, 1000) }));
+  const history = input.history.slice(-12).map(message => ({ role: message.role === 'coach' ? 'assistant' as const : 'user' as const, content: message.role === 'coach' ? JSON.stringify({ reply: message.text.slice(0, 1000) }) : message.text.slice(0, 1000) }));
   const task = input.newSession
     ? `Start a fresh ordinary open conversation. Do not announce a level or lesson. Learner memory: ${JSON.stringify(input.memory)}`
     : `Private learner memory: ${JSON.stringify(input.memory)}\nLearner-turn signal: ${input.turnStatus}. Respond to the learner's latest message.`;
-  return coachRequest<{ reply: string; tip: string; memory: CoachMemory }>(input.key, [{ role: 'system', content: DEFAULT_COACH_SKILL }, ...history, { role: 'user', content: task }], 'lucky_coach_turn', schema, input.signal, input.voiceMode);
+  return coachRequest<{ reply: string; tip: string; memory: CoachMemory }>(input.key, [{ role: 'system', content: DEFAULT_COACH_SKILL }, ...history, { role: 'user', content: task }], 'lucky_coach_turn', schema, input.signal);
 }
 
 export async function coachPracticeDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; signal: AbortSignal }) {
@@ -100,8 +102,8 @@ const vocabularySchema = {
   properties: { word: { type: 'string' }, definition: { type: 'string' } },
 };
 const grammarSchema = {
-  type: 'object', additionalProperties: false, required: ['point', 'example'],
-  properties: { point: { type: 'string' }, example: { type: 'string' } },
+  type: 'object', additionalProperties: false, required: ['point', 'example', 'highlights'],
+  properties: { point: { type: 'string' }, example: { type: 'string' }, highlights: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string' } } },
 };
 
 export async function coachDailySummaryDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; existing?: CoachDailySummary; signal: AbortSignal }) {
@@ -120,7 +122,7 @@ export async function coachDailySummaryDirect(input: { key: string; history: Coa
   };
   const transcript = input.history.map(message => `${message.role === 'coach' ? 'Coach' : 'Learner'}: ${message.text}`).join('\n').slice(-14000);
   const prompt = `Create or update today's English learning recall from the conversation below. Write all learning content in clear, encouraging English for the learner to read. Be specific, constructive, and concise.
-Focus first on what the learner practised, useful next steps, and language worth carrying forward. Include only vocabulary and grammar grounded in this conversation. Vocabulary rows must contain an English word or short phrase and an English definition. Grammar rows must contain a named grammar point and one natural English example.
+Focus first on what the learner practised, useful next steps, and language worth carrying forward. Include only vocabulary and grammar grounded in this conversation. Vocabulary rows must contain an English word or short phrase and an English definition. Grammar rows must contain a named grammar point and one natural English example. In each grammar row, highlights must contain 1–4 short exact substrings of the example that demonstrate the named pattern, such as the verb form, frequency adverb, or required preposition. Highlight only what the learner should notice, never the whole sentence. The named grammar point must actually occur in its example: a noun after "listen to" is not a gerund. Add highlights to any retained older rows as well.
 The transcript may contain speech-recognition noise, omitted words, false starts, or self-corrections. Treat a self-reported IELTS score or level in learner memory as meaningful context: for IELTS 7 or 8, assume isolated awkward wording is a recording artefact unless the transcript gives strong contrary evidence. Across every level, only add likelyMistakes for a confirmed language issue: it must either recur in independently clear learner turns or be unambiguously wrong in context and impossible to explain as transcription noise. Do not make a correction from one short phrase, a word-order glitch, a missing word, punctuation, a homophone, or a phrase that could have been self-corrected in speech. If uncertain, omit it completely. Never label a possible recording artefact as a learner mistake. Empty arrays are expected when evidence is insufficient.
 For every included likelyMistakes item, set confidence to "confirmed". Re-evaluate the existing recall under these stricter evidence rules and remove any earlier correction that is not confirmed. Use warm learner-facing labels in the content: describe a correction as one thing to refine, never as a failure or weakness. Never invent a mistake.
 Learner memory: ${JSON.stringify(input.memory)}
@@ -140,7 +142,7 @@ export async function coachWeeklySummaryDirect(input: { key: string; daily: Coac
       grammar: { type: 'array', items: grammarSchema, maxItems: 8 },
     },
   };
-  const prompt = `Combine these daily English learning recalls into one weekly recall. Write everything in clear English. Show concrete progress, recurring weaknesses, and next priorities. Deduplicate vocabulary and grammar. Keep the most useful English definitions and English examples. Do not add claims unsupported by the daily records.
+  const prompt = `Combine these daily English learning recalls into one weekly recall. Write everything in clear English. Show concrete progress, recurring weaknesses, and next priorities. Deduplicate vocabulary and grammar. Keep the most useful English definitions and English examples. Each grammar row must include highlights: 1–4 short exact substrings of its example demonstrating the named grammar point, never the whole sentence. Preserve useful existing highlights and add them to older rows. Ensure the example actually demonstrates the named pattern. Do not add claims unsupported by the daily records.
 Daily recalls:
 ${JSON.stringify(input.daily).slice(0, 18000)}`;
   return coachRequest<Omit<CoachWeeklySummary, 'id' | 'startDate' | 'endDate' | 'minutes'>>(input.key, [{ role: 'system', content: 'You consolidate daily English learning recalls into a concise weekly learning record. Return only the requested JSON.' }, { role: 'user', content: prompt }], 'lucky_weekly_recall', schema, input.signal);

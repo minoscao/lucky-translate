@@ -60,11 +60,11 @@ export async function completeRegistration(email: string, value: unknown) {
   const id = crypto.randomUUID(), plan = PLAN_DEFAULTS.lv1;
   try {
     const result = await db.batch([
-      db.prepare(`INSERT INTO users(id,username,email,password_hash,status,level,daily_seconds_limit,monthly_seconds_limit,daily_token_limit,monthly_price_cents,storage_limit_bytes,membership_expires_at,admin_note,created_at,updated_at)
-        SELECT ?1,username,email,password_hash,'active','lv1',?2,?3,?4,?5,104857600,NULL,'',?6,?6 FROM pending_registrations
+      db.prepare(`INSERT INTO users(id,username,email,password_hash,status,level,daily_seconds_limit,monthly_seconds_limit,daily_token_limit,monthly_token_limit,monthly_price_cents,storage_limit_bytes,membership_expires_at,admin_note,created_at,updated_at)
+        SELECT ?1,username,email,password_hash,'active','lv1',?2,?3,?4,?9,?5,104857600,NULL,'',?6,?6 FROM pending_registrations
         WHERE email=?7 AND code_hash=?8 AND expires_at>?6 AND attempts<=5
         AND NOT EXISTS(SELECT 1 FROM users WHERE lower(email)=?7 OR lower(username)=lower(pending_registrations.username))`)
-        .bind(id, plan.dailySeconds, plan.monthlySeconds, plan.dailyTokens, plan.priceCents, Date.now(), email, row.code_hash),
+        .bind(id, plan.dailySeconds, plan.monthlySeconds, plan.dailyTokens, plan.priceCents, Date.now(), email, row.code_hash, plan.monthlyTokens),
       db.prepare('DELETE FROM pending_registrations WHERE email=?1 AND code_hash=?2 AND EXISTS(SELECT 1 FROM users WHERE id=?3)').bind(email, row.code_hash, id),
     ]);
     if (!result[0].meta.changes) throw authError('验证码已使用或昵称已被占用，请登录或重新注册', 409);

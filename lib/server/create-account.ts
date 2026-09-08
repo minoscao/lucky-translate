@@ -15,14 +15,14 @@ export async function createAccount(body: Record<string, unknown>, membership?: 
   const db = getDb();
   if (await db.prepare('SELECT 1 ok FROM users WHERE lower(email) = ?1').bind(email).first()) fail('这个邮箱已经注册', 409);
   if (await db.prepare('SELECT 1 ok FROM users WHERE lower(username) = lower(?1)').bind(username).first()) fail('这个用户名已经被使用', 409);
-  const plan = membership ? PLAN_DEFAULTS[membership.level] : { dailySeconds: 0, monthlySeconds: 0, dailyTokens: 0, priceCents: 0 };
+  const plan = membership ? PLAN_DEFAULTS[membership.level] : { dailySeconds: 0, monthlySeconds: 0, dailyTokens: 0, monthlyTokens: 0, priceCents: 0 };
   const id = crypto.randomUUID(), now = Date.now();
   const note = membership && typeof body.adminNote === 'string' ? body.adminNote.trim().slice(0, 500) : '';
   try {
-    const result = await db.prepare(`INSERT INTO users (id, username, email, password_hash, status, level, daily_seconds_limit, monthly_seconds_limit, daily_token_limit, monthly_price_cents, storage_limit_bytes, membership_expires_at, admin_note, created_at, updated_at)
-      SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 104857600, NULL, ?11, ?12, ?12
+    const result = await db.prepare(`INSERT INTO users (id, username, email, password_hash, status, level, daily_seconds_limit, monthly_seconds_limit, daily_token_limit, monthly_token_limit, monthly_price_cents, storage_limit_bytes, membership_expires_at, admin_note, created_at, updated_at)
+      SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?13, ?10, 104857600, NULL, ?11, ?12, ?12
       WHERE NOT EXISTS (SELECT 1 FROM users WHERE lower(email) = ?3 OR lower(username) = lower(?2))`)
-      .bind(id, username, email, await hashPassword(password), membership?.status || 'pending', membership?.level || 'pending', plan.dailySeconds, plan.monthlySeconds, plan.dailyTokens, plan.priceCents, note, now).run();
+      .bind(id, username, email, await hashPassword(password), membership?.status || 'pending', membership?.level || 'pending', plan.dailySeconds, plan.monthlySeconds, plan.dailyTokens, plan.priceCents, note, now, plan.monthlyTokens).run();
     if (!result.meta.changes) fail('邮箱或用户名已被使用，请检查后重试', 409);
   } catch (error) {
     if (error instanceof Error && /unique constraint/i.test(error.message)) fail('邮箱或用户名已被使用，请检查后重试', 409);

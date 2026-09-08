@@ -11,7 +11,7 @@ const securityUrl=url(stub+strip(await read('../lib/server/auth-security.ts')));
 const authUrl=url(stub+await read('../lib/membership-plans.ts')+strip(await read('../lib/server/auth.ts')));
 const verificationUrl=url(`import {hashPassword,verifyPassword,PLAN_DEFAULTS} from '${authUrl}';import {authError,ensureAuthTables,validateNewPassword} from '${securityUrl}';const getEmailSender=()=>globalThis.__emailSender;`+stub+await read('../lib/auth-inputs.ts')+strip(await read('../lib/server/email-verification.ts')));
 const verification=await import(verificationUrl),auth=await import(authUrl);
-const schema=await read('../drizzle/0000_noisy_anthem.sql');
+const schema=await read('../drizzle/0000_noisy_anthem.sql')+await read('../drizzle/0003_monthly_token_limit.sql');
 function fixture(){
   const db=new DatabaseSync(':memory:');db.exec(schema);
   const prepare=sql=>{let args=[];const params=()=>sql.includes('?1')?[Object.fromEntries(args.map((v,i)=>[String(i+1),v]))]:args;return {bind(...v){args=v;return this;},async first(){return db.prepare(sql).get(...params())||null;},async run(){return {meta:db.prepare(sql).run(...params())};}};};
@@ -30,7 +30,7 @@ test('email verification creates only Lv1 after proof, hashes secrets and consum
     assert.notEqual(row.password_hash,body.password);assert.notEqual(row.code_hash,f.code());
     const outcomes=await Promise.allSettled([verification.completeRegistration(body.email,f.code()),verification.completeRegistration(body.email,f.code())]);
     assert.equal(outcomes.filter(x=>x.status==='fulfilled').length,1);
-    const account=f.db.prepare('SELECT * FROM users').get();assert.equal(account.level,'lv1');assert.equal(account.status,'active');assert.equal(account.daily_seconds_limit,600);
+    const account=f.db.prepare('SELECT * FROM users').get();assert.equal(account.level,'lv1');assert.equal(account.status,'active');assert.equal(account.daily_seconds_limit,720);
     assert.equal(await auth.verifyPassword(body.password,account.password_hash),true);
     assert.equal(f.db.prepare('SELECT count(*) n FROM pending_registrations').get().n,0);
     await assert.rejects(verification.completeRegistration(body.email,f.code()));

@@ -35,7 +35,7 @@ export async function chargeTextTime(account: Account, category: TimeCategory, t
 }
 
 export async function timeLedger(userId: string) {
-  const records = await getDb().prepare("SELECT id,feature,price_snapshot,created_at FROM usage_events WHERE user_id=?1 AND provider='membership' ORDER BY created_at DESC LIMIT 100").bind(userId).all<{ id: string; feature: string; price_snapshot: string; created_at: number }>();
+  const records = await getDb().prepare("SELECT id,feature,price_snapshot,created_at FROM usage_events WHERE user_id=?1 AND provider='membership' AND model IN ('text-duration-v1','legacy-time-refund') ORDER BY created_at DESC LIMIT 100").bind(userId).all<{ id: string; feature: string; price_snapshot: string; created_at: number }>();
   return records.results.map(record => ({ id: record.id, label: record.feature, createdAt: record.created_at, ...JSON.parse(record.price_snapshot) }));
 }
 

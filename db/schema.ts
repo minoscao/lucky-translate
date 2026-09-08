@@ -10,6 +10,7 @@ export const users = sqliteTable('users', {
   dailySecondsLimit: integer('daily_seconds_limit').notNull().default(0),
   monthlySecondsLimit: integer('monthly_seconds_limit').notNull().default(0),
   dailyTokenLimit: integer('daily_token_limit').notNull().default(0),
+  monthlyTokenLimit: integer('monthly_token_limit').notNull().default(0),
   monthlyPriceCents: integer('monthly_price_cents').notNull().default(0),
   storageLimitBytes: integer('storage_limit_bytes').notNull().default(104857600),
   membershipExpiresAt: integer('membership_expires_at'),

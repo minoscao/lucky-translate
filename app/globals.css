@@ -330,6 +330,14 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .coach-actions button { min-height: 52px; border-radius: 17px; }
 .coach-mic { gap: 8px; touch-action: none; user-select: none; }
 .coach-mic[data-active=true] { background: var(--record-active); }
+.record-control { position: relative; min-width: 0; }
+.record-control > .coach-mic { width: 100%; }
+.record-feedback { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 5; display: flex; align-items: center; gap: 4px; width: max-content; max-width: min(330px, calc(100vw - 56px)); padding: 2px 4px 2px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--popover); color: var(--popover-foreground); box-shadow: 0 4px 18px #0003; pointer-events: none; transition: background-color .15s, border-color .15s; }
+.record-feedback output { display: flex; align-items: center; gap: 6px; font-size: .875rem; }
+.record-feedback output svg { width: 18px; height: 18px; flex-shrink: 0; }
+.record-feedback .record-cancel { min-height: 44px; min-width: 44px; padding: 8px; pointer-events: auto; }
+.record-control[data-cancel=true] .record-feedback { color: var(--destructive); border-color: var(--destructive); }
+.coach-mic[data-cancel=true] { background: var(--destructive); color: var(--background); }
 .coach-record-hint { margin: 7px 0 10px; color: var(--muted-foreground); text-align: center; font-size: .68rem; }
 .coach-summary-button { align-self: center; height: 26px; margin: -4px auto 5px; padding-inline: 10px; color: var(--self-accent); font-size: .72rem; }
 .summary-spinner { width: 44px; height: 44px; margin: 0 auto 22px; color: var(--primary); }
@@ -441,9 +449,13 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .member-pending h1 { margin-bottom: 0; }
 .member-pending > p { margin: 0; }
 .member-pending > strong { color: var(--self-accent); }
-.member-summary { display: grid; grid-template-columns: 1fr auto; gap: 5px 16px; width: 100%; margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--background); text-align: left; }
-.member-summary span { color: var(--self-accent); font-weight: 700; }
+.member-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 12px; width: 100%; margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--background); text-align: left; }
+.member-summary > span { color: var(--self-accent); font-weight: 700; overflow-wrap: anywhere; }
 .member-summary small { grid-column: 1 / -1; color: var(--muted-foreground); }
+.fish-amount { display: inline-flex; align-items: center; gap: .35em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fish-amount-label { color: var(--muted-foreground); font-size: .8em; font-weight: 500; }
+.fish-amount svg { width: 1.25em; height: 1.25em; flex: none; color: var(--primary); }
+.study-highlight { background: color-mix(in srgb, var(--primary) 19%, transparent); color: var(--foreground); font-weight: 700; text-decoration: underline; text-decoration-color: var(--primary); text-decoration-thickness: 2px; text-underline-offset: 3px; border-radius: 3px; padding: 0 .1em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .storage-warning { width: 100%; margin: -6px 0 14px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--primary) 70%, var(--border)); border-radius: 12px; background: color-mix(in srgb, var(--primary) 10%, var(--card)); color: var(--primary); }
 .mode-account-actions { display: flex; justify-content: center; gap: 4px; }
 .settings-form { display: grid; }

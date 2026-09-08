@@ -8,7 +8,7 @@ import { chargeTextTime } from '@/lib/server/text-time';
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return json({ error: '请从 English Coach 页面发起请求' }, 403);
   try {
-    const account = await requireAccount(request), body = await readJson<{ messages?: unknown; maxTokens?: unknown; voiceMode?: unknown }>(request, 48 * 1024);
+    const account = await requireAccount(request), body = await readJson<{ messages?: unknown; maxTokens?: unknown }>(request, 48 * 1024);
     if (!Array.isArray(body.messages) || body.messages.length < 1 || body.messages.length > 20) return json({ error: '对话内容无效' }, 400);
     const messages: DeepSeekMessage[] = [];
     for (const item of body.messages) {
@@ -26,10 +26,10 @@ export async function POST(request: Request) {
       try { coachTimeBasis(messages, parsed); }
       catch { console.warn('Coach unexpected response fields', { fields: Object.entries(parsed).map(([key, value]) => `${key.slice(0, 40)}:${Array.isArray(value) ? 'array' : typeof value}`).slice(0, 12) }); throw new Error('invalid_fields'); }
     };
-    const result = await deepSeekJson(account, '英语训练', messages, request.signal, Math.max(200, Math.min(3000, Number(body.maxTokens) || 1800)), body.voiceMode === true ? 2 : 1, validate);
+    const result = await deepSeekJson(account, '英语训练', messages, request.signal, Math.max(200, Math.min(3000, Number(body.maxTokens) || 1800)), validate, true);
     let parsed: Record<string, unknown>, basis: ReturnType<typeof coachTimeBasis>;
     try { parsed = parseCoachContent(result.content); basis = coachTimeBasis(messages, parsed); }
-    catch { console.warn('Coach response validation failed', { characters: result.content.length }); return json({ error: 'Lucky 的回复未完整生成，请重试。本次未扣除对话 Points。' }, 502); }
+    catch { console.warn('Coach response validation failed', { characters: result.content.length }); return json({ error: 'Lucky 的回复未完整生成，请重试。本次未扣除对话 小鱼干。' }, 502); }
     const time = await chargeTextTime(account, basis.category, basis.texts, basis.label, result.usage.eventId);
     return json({ content: JSON.stringify(parsed), usage: { ...result.usage, time } });
   } catch (error) { return json({ error: error instanceof Error ? error.message : 'English Coach 暂时无法回应' }, (error as { status?: number }).status || 500); }

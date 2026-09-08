@@ -2,8 +2,9 @@
 /* oxlint-disable jsx-a11y/label-has-associated-control, jsx-a11y/prefer-tag-over-role -- Base UI fields retain their visible accessible labels. */
 
 import { useEffect, useState } from 'react';
-import { CheckCircle2, CreditCard, KeyRound, LoaderCircle, LogOut, RefreshCw, Settings2, ShieldCheck, UserPlus, Users } from 'lucide-react';
-import { defaultClientPassword } from '@/lib/membership-plans';
+import { CheckCircle2, CreditCard, LoaderCircle, LogOut, RefreshCw, Settings2, ShieldCheck, UserPlus, Users } from 'lucide-react';
+import { defaultClientPassword, SECONDS_PER_FISH } from '@/lib/membership-plans';
+import { formatPoints, pointsForSeconds } from '@/lib/points';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -25,37 +26,35 @@ type AdminData = { retentionRules: RetentionRules;
 };
 type Tab = 'business' | 'clients' | 'payment';
 
-const duration = (seconds: number) => seconds >= 3600 ? `${(seconds / 3600).toFixed(1)} 小时` : `${Math.round(seconds / 60)} 分钟`;
 const bytes = (value: number) => `${(value / 1024 / 1024).toFixed(1)} MB`;
 const money = (value: number) => `$${value.toFixed(2)}`;
 const stateLabel = (status: string) => status === 'pending' ? '待激活' : status === 'active' ? '已激活' : status === 'expired' ? '已到期' : '已暂停';
 
 function UserEditor({ user, refresh }: { user?: AdminUser; refresh: (data: AdminData) => void }) {
   const [level, setLevel] = useState(user?.level || 'lv1'), [status, setStatus] = useState(user?.status || 'active');
-  const [dailyMinutes, setDailyMinutes] = useState(String(Math.round((user?.limits.dailySeconds ?? 600) / 60))), [monthlyHours, setMonthlyHours] = useState(String((user?.limits.monthlySeconds ?? 0) / 3600));
-  const [dailyTokens, setDailyTokens] = useState(String((user?.limits.dailyTokens ?? 10000))), [price, setPrice] = useState(String((user?.monthlyPrice ?? 0))), [note, setNote] = useState(user?.adminNote || '');
+  const [dailyFish, setDailyFish] = useState(String(pointsForSeconds(user?.limits.dailySeconds ?? PLAN_DEFAULTS.lv1.dailySeconds))), [monthlyFish, setMonthlyFish] = useState(String(pointsForSeconds(user?.limits.monthlySeconds ?? 0)));
+  const [dailyTokens, setDailyTokens] = useState(String(user?.limits.dailyTokens ?? PLAN_DEFAULTS.lv1.dailyTokens)), [monthlyTokens, setMonthlyTokens] = useState(String(user?.limits.monthlyTokens ?? PLAN_DEFAULTS.lv1.monthlyTokens)), [price, setPrice] = useState(String((user?.monthlyPrice ?? 0))), [note, setNote] = useState(user?.adminNote || '');
   const [expires, setExpires] = useState(user?.membershipExpiresAt ? new Date(user.membershipExpiresAt).toISOString().slice(0, 10) : '');
   const [saving, setSaving] = useState(false), [message, setMessage] = useState('');
   const [email, setEmail] = useState(''), [username, setUsername] = useState(''), [initialPassword, setInitialPassword] = useState('');
   const applyPlan = (value: string) => {
     setLevel(value); setStatus('active');
     const plan = PLAN_DEFAULTS[value as keyof typeof PLAN_DEFAULTS];
-    const defaults = [plan.dailySeconds / 60, plan.monthlySeconds / 3600, plan.dailyTokens, plan.priceCents / 100];
-    setDailyMinutes(String(defaults[0])); setMonthlyHours(String(defaults[1])); setDailyTokens(String(defaults[2])); setPrice(String(defaults[3]));
+    setDailyFish(String(pointsForSeconds(plan.dailySeconds))); setMonthlyFish(String(pointsForSeconds(plan.monthlySeconds))); setDailyTokens(String(plan.dailyTokens)); setMonthlyTokens(String(plan.monthlyTokens)); setPrice(String(plan.priceCents / 100));
   };
   const save = async () => {
     if (saving) return;
     setSaving(true); setMessage('');
     try {
       const membershipExpiresAt = expires ? new Date(`${expires}T23:59:59+08:00`).getTime() : null;
-      const data = await accountRequest<AdminData>('/api/admin', { method: 'POST', body: JSON.stringify({ action: user ? 'update_user' : 'create_user', id: user?.id, email, username, password: initialPassword, level, status, dailySeconds: Number(dailyMinutes) * 60, monthlySeconds: Number(monthlyHours) * 3600, dailyTokens: Number(dailyTokens), monthlyPriceCents: Number(price) * 100, membershipExpiresAt, adminNote: note }) });
+      const data = await accountRequest<AdminData>('/api/admin', { method: 'POST', body: JSON.stringify({ action: user ? 'update_user' : 'create_user', id: user?.id, email, username, password: initialPassword, level, status, dailySeconds: Number(dailyFish) * SECONDS_PER_FISH, monthlySeconds: Number(monthlyFish) * SECONDS_PER_FISH, dailyTokens: Number(dailyTokens), monthlyTokens: Number(monthlyTokens), monthlyPriceCents: Number(price) * 100, membershipExpiresAt, adminNote: note }) });
       setInitialPassword(''); refresh(data); setMessage(user ? '已保存' : '客户已创建');
     } catch (error) { setMessage(error instanceof Error ? error.message : '保存失败'); } finally { setSaving(false); }
   };
   return <form className="admin-user-card" onSubmit={event => { event.preventDefault(); void save(); }}>
     <fieldset disabled={saving} className="admin-editor-fields">
     {user && <><header><div><strong>{user.username}</strong><span>{user.email || '尚未绑定邮箱'} · 最近登录 {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleDateString('zh-CN') : '尚未登录'}</span></div><span className={`member-state ${user.status}`}>{stateLabel(user.status)} · {user.level.toUpperCase()}</span></header>
-    <div className="admin-user-metrics"><span>今日计费 <b>{duration(user.usage.todaySeconds)}</b></span><span>训练 / 翻译 <b>{duration(user.usage.todayTrainingSeconds)} / {duration(user.usage.todayTranslationSeconds)}</b></span><span>今日 Token <b>{user.usage.todayTokens.toLocaleString()}</b></span><span>今日成本 <b>{money(user.usage.todayCost)}</b></span><span>云空间 <b>{bytes(user.storage.bytes)} / {bytes(user.storage.limitBytes)}</b></span></div>
+    <div className="admin-user-metrics"><span>今日计费 <b>{formatPoints(user.usage.todaySeconds)}</b></span><span>训练 / 翻译 <b>{formatPoints(user.usage.todayTrainingSeconds)} / {formatPoints(user.usage.todayTranslationSeconds)}</b></span><span>今日 Token <b>{user.usage.todayTokens.toLocaleString()}</b></span><span>今日成本 <b>{money(user.usage.todayCost)}</b></span><span>云空间 <b>{bytes(user.storage.bytes)} / {bytes(user.storage.limitBytes)}</b></span></div>
     </>}
     {!user && <div className="admin-user-fields">
       <label>邮箱<Input type="email" required maxLength={254} value={email} autoComplete="off" onChange={event => { const value = event.target.value; setEmail(value); if (!initialPassword || initialPassword === defaultClientPassword(email)) setInitialPassword(defaultClientPassword(value)); if (!username || username === email.split('@')[0]) setUsername(value.split('@')[0]); }} /></label>
@@ -63,11 +62,12 @@ function UserEditor({ user, refresh }: { user?: AdminUser; refresh: (data: Admin
       <label>初始密码<Input type="password" required minLength={8} maxLength={128} value={initialPassword} autoComplete="new-password" placeholder="按邮箱自动生成，可修改" onChange={event => setInitialPassword(event.target.value)} /></label>
     </div>}
     <div className="admin-user-fields">
-      <label>会员等级<Select disabled={saving} value={level} onValueChange={value => value && applyPlan(value)}><SelectTrigger><SelectValue>{level.toUpperCase()}</SelectValue></SelectTrigger><SelectContent><SelectItem value="lv1">Lv1 · 每日 10 分钟</SelectItem><SelectItem value="lv2">Lv2 · 每日 2 小时</SelectItem><SelectItem value="lv3">Lv3 · 每月 100 小时</SelectItem></SelectContent></Select></label>
+      <label>会员等级<Select disabled={saving} value={level} onValueChange={value => value && applyPlan(value)}><SelectTrigger><SelectValue>{level.toUpperCase()}</SelectValue></SelectTrigger><SelectContent><SelectItem value="lv1">Lv1 · 每日 10 条小鱼干</SelectItem><SelectItem value="lv2">Lv2 · 每日 100 条小鱼干</SelectItem><SelectItem value="lv3">Lv3 · 每月 5,000 条小鱼干</SelectItem></SelectContent></Select></label>
       <label>账户状态<Select disabled={saving} value={status} onValueChange={value => value && setStatus(value)}><SelectTrigger><SelectValue>{stateLabel(status)}</SelectValue></SelectTrigger><SelectContent><SelectItem value="pending">待激活</SelectItem><SelectItem value="active">已激活</SelectItem><SelectItem value="suspended">暂停</SelectItem></SelectContent></Select></label>
-      {user && <><label>每日分钟<Input inputMode="numeric" value={dailyMinutes} onChange={event => setDailyMinutes(event.target.value)} /></label>
-      <label>每月小时<Input inputMode="decimal" value={monthlyHours} onChange={event => setMonthlyHours(event.target.value)} /></label>
+      {user && <><label>每日小鱼干<Input inputMode="numeric" value={dailyFish} onChange={event => setDailyFish(event.target.value)} /></label>
+      <label>每月小鱼干<Input inputMode="decimal" value={monthlyFish} onChange={event => setMonthlyFish(event.target.value)} /></label>
       <label>每日 Token<Input inputMode="numeric" value={dailyTokens} onChange={event => setDailyTokens(event.target.value)} /></label>
+      <label>每月 Token<Input inputMode="numeric" value={monthlyTokens} onChange={event => setMonthlyTokens(event.target.value)} /></label>
       <label>月费（美元）<Input inputMode="decimal" value={price} onChange={event => setPrice(event.target.value)} /></label>
       <label>会员到期日<Input type="date" value={expires} onChange={event => setExpires(event.target.value)} /></label></>}
     </div>
@@ -106,7 +106,7 @@ function BusinessSettings({ data, update, error }: { data: AdminData; update: (d
 }
 
 function ClientGrid({ users, select, create }: { users: AdminUser[]; select: (user: AdminUser) => void; create: () => void }) {
-  return <section className="admin-section clients-section"><header><div><p className="admin-eyebrow">CLIENT DIRECTORY</p><h2>客户</h2><span>按状态、套餐和今日使用情况快速扫描。点击任一行打开详情。</span></div><div className="admin-client-actions"><strong>{users.length} 位客户</strong><Button onClick={create}><UserPlus />新建客户</Button></div></header><div className="client-list"><div className="client-list-head"><span>客户</span><span>会员</span><span>今日使用</span><span>Token / 成本</span><span>云空间</span><span /></div>{users.map(user => <button className="client-list-row" type="button" key={user.id} aria-label={`打开 ${user.username} 的客户详情`} onClick={() => select(user)}><span><strong>{user.username}</strong><small>{user.email || '尚未绑定邮箱'}</small></span><span><b className={`member-state ${user.status}`}>{user.level.toUpperCase()}</b><small>{stateLabel(user.status)}</small></span><span><strong>{duration(user.usage.todaySeconds)}</strong><small>训练 {duration(user.usage.todayTrainingSeconds)} · 翻译 {duration(user.usage.todayTranslationSeconds)}</small></span><span><strong>{user.usage.todayTokens.toLocaleString()}</strong><small>{money(user.usage.todayCost)}</small></span><span><strong>{bytes(user.storage.bytes)}</strong><small>上限 {bytes(user.storage.limitBytes)}</small></span><span className="client-list-open">查看</span></button>)}</div></section>;
+  return <section className="admin-section clients-section"><header><div><p className="admin-eyebrow">CLIENT DIRECTORY</p><h2>客户</h2><span>按状态、套餐和今日使用情况快速扫描。点击任一行打开详情。</span></div><div className="admin-client-actions"><strong>{users.length} 位客户</strong><Button onClick={create}><UserPlus />新建客户</Button></div></header><div className="client-list"><div className="client-list-head"><span>客户</span><span>会员</span><span>今日使用</span><span>Token / 成本</span><span>云空间</span><span /></div>{users.map(user => <button className="client-list-row" type="button" key={user.id} aria-label={`打开 ${user.username} 的客户详情`} onClick={() => select(user)}><span><strong>{user.username}</strong><small>{user.email || '尚未绑定邮箱'}</small></span><span><b className={`member-state ${user.status}`}>{user.level.toUpperCase()}</b><small>{stateLabel(user.status)}</small></span><span><strong>{formatPoints(user.usage.todaySeconds)}</strong><small>训练 {formatPoints(user.usage.todayTrainingSeconds)} · 翻译 {formatPoints(user.usage.todayTranslationSeconds)}</small></span><span><strong>{user.usage.todayTokens.toLocaleString()}</strong><small>{money(user.usage.todayCost)}</small></span><span><strong>{bytes(user.storage.bytes)}</strong><small>上限 {bytes(user.storage.limitBytes)}</small></span><span className="client-list-open">查看</span></button>)}</div></section>;
 }
 
 function Payments({ data, update, error }: { data: AdminData; update: (data: AdminData) => void; error: (value: string) => void }) {

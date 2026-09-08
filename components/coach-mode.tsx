@@ -1,32 +1,19 @@
 'use client';
 
-import { PointerEvent, SyntheticEvent, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, BookOpenText, Check, Download, GraduationCap, KeyRound, LoaderCircle, MessageCircleHeart, Mic, RotateCcw, Send, Settings2, Sparkles, Square, Target, UserRound, Volume2, WandSparkles, X } from 'lucide-react';
+import { SyntheticEvent, useEffect, useRef, useState } from 'react';
+import { ArrowLeft, BookOpenText, Check, Download, GraduationCap, KeyRound, LoaderCircle, MessageCircleHeart, RotateCcw, Send, Settings2, Sparkles, Target, UserRound, Volume2, WandSparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useCoach } from '@/hooks/use-coach';
 import { CoachDailySummary, CoachWeeklySummary } from '@/lib/coach';
+import { RecordButton } from '@/components/record-button';
 import { CoachPet } from '@/components/coach-pet';
+import { HighlightedText } from '@/components/highlighted-text';
+import { grammarHighlights } from '@/lib/text-highlights';
 
 type CoachController = ReturnType<typeof useCoach>;
-type Props = { coach: CoachController; speaking: boolean; ieltsScore?: number; initialStage?: 'chat' | 'dashboard'; onBack: () => void; onSettings: () => void; onIelts: () => void; onSecurity: () => void; onLogout: () => void; onHowItWorks: () => void; onSpeak: (text: string) => void };
-type Stage = 'chat' | 'summarizing' | 'summary' | 'dashboard' | 'practice' | 'done';
-
-function CoachRecordButton({ coach }: { coach: CoachController }) {
-  const press = useRef<{ id: number; started: number } | undefined>(undefined);
-  const down = (event: PointerEvent<HTMLButtonElement>) => {
-    event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
-    if (coach.recording) { press.current = undefined; void coach.stopRecording(); return; }
-    press.current = { id: event.pointerId, started: performance.now() }; void coach.startRecording();
-  };
-  const up = (event: PointerEvent<HTMLButtonElement>) => {
-    const current = press.current; press.current = undefined;
-    if (current?.id === event.pointerId && performance.now() - current.started >= 350) void coach.stopRecording();
-  };
-  return <Button type="button" className="coach-mic" data-active={coach.recording} disabled={coach.busy} aria-label={coach.recording ? 'Stop recording' : 'Tap to record, or hold to talk'} onPointerDown={down} onPointerUp={up} onPointerCancel={() => { if (press.current) void coach.stopRecording(); press.current = undefined; }} onContextMenu={event => event.preventDefault()}>
-    {coach.busy ? <LoaderCircle className="spinning" /> : coach.recording ? <Square fill="currentColor" /> : <Mic />}<span>{coach.recording ? 'Listening…' : 'Speak'}</span>
-  </Button>;
-}
+type Props = { coach: CoachController; speaking: boolean; ieltsScore?: number; initialStage?: 'chat' | 'dashboard'; onBack: () => void; onSettings: () => void; onIelts: () => void; onSecurity: () => void; onLogout: () => void; onHowItWorks: () => void; onStopSpeech: () => void; onSpeak: (text: string) => void };
+type Stage = 'chat' | 'paused' | 'summarizing' | 'summary' | 'dashboard' | 'practice' | 'done';
 
 function RecallTables({ report }: { report: CoachDailySummary | CoachWeeklySummary }) {
   const daily = 'mainFocus' in report ? report : undefined, weekly = 'progress' in report ? report : undefined, confirmedMistakes = daily?.likelyMistakes.filter(item => item.confidence === 'confirmed') || [];
@@ -36,7 +23,7 @@ function RecallTables({ report }: { report: CoachDailySummary | CoachWeeklySumma
     {weekly?.nextFocus.length ? <section><h3><WandSparkles/>Your next step</h3><ul>{weekly.nextFocus.map(item => <li key={item}>{item}</li>)}</ul></section> : null}
     {confirmedMistakes.length ? <section className="recall-refinements"><h3><MessageCircleHeart/>One thing to refine</h3><p>Only clear language patterns are shown here. Possible recording glitches are left out.</p><div className="recall-mistakes">{confirmedMistakes.map(item => <article key={`${item.original}-${item.better}`}><span>{item.original}</span><strong>{item.better}</strong><small>{item.reason}</small></article>)}</div></section> : null}
     {report.vocabulary.length ? <section><h3><BookOpenText/>Words to take with you</h3><div className="recall-table">{report.vocabulary.map(item => <div key={item.word}><strong>{item.word}</strong><span>{item.definition}</span></div>)}</div></section> : null}
-    {report.grammar.length ? <section><h3><GraduationCap/>Grammar in use</h3><div className="recall-table grammar">{report.grammar.map(item => <div key={item.point}><strong>{item.point}</strong><span>{item.example}</span></div>)}</div></section> : null}
+    {report.grammar.length ? <section><h3><GraduationCap/>Grammar in use</h3><div className="recall-table grammar">{report.grammar.map(item => <div key={item.point}><strong>{item.point}</strong><span><HighlightedText text={item.example} highlights={grammarHighlights(item)} variant="study" /></span></div>)}</div></section> : null}
   </div>;
 }
 
@@ -55,9 +42,9 @@ const exportRecall = (report: CoachDailySummary | CoachWeeklySummary) => {
   const blob = new Blob([recallText(report)], { type: 'text/plain;charset=utf-8' }), url = URL.createObjectURL(blob), anchor = document.createElement('a');
   anchor.href = url; anchor.download = `${report.id}.txt`; anchor.click(); URL.revokeObjectURL(url);
 };
-const highlightedText = (text: string) => text.split(/(\*\*[^*]+\*\*)/g).map((part, index) => part.startsWith('**') && part.endsWith('**') ? <strong key={index}>{part.slice(2, -2)}</strong> : part);
+const highlightedText = (text: string) => <HighlightedText text={text} />;
 
-export function CoachMode({ coach, speaking, ieltsScore, initialStage = 'chat', onBack, onSettings, onIelts, onSecurity, onLogout, onHowItWorks, onSpeak }: Props) {
+export function CoachMode({ coach, speaking, ieltsScore, initialStage = 'chat', onBack, onSettings, onIelts, onSecurity, onLogout, onHowItWorks, onStopSpeech, onSpeak }: Props) {
   const [draft, setDraft] = useState(''), [stage, setStage] = useState<Stage>(initialStage), [selectedSummary, setSelectedSummary] = useState<CoachDailySummary>();
   const [question, setQuestion] = useState(0), [answer, setAnswer] = useState(''), [checked, setChecked] = useState(false), [score, setScore] = useState(0);
   const view = useRef<HTMLDivElement>(null);
@@ -66,6 +53,7 @@ export function CoachMode({ coach, speaking, ieltsScore, initialStage = 'chat', 
   const submit = (event: SyntheticEvent<HTMLFormElement>) => { event.preventDefault(); const text = draft.trim(); if (!text) return; setDraft(''); void coach.sendText(text); };
   const startPractice = async () => { if (await coach.createPractice()) { setQuestion(0); setAnswer(''); setChecked(false); setScore(0); setStage('practice'); } };
   const summarize = async () => { setStage('summarizing'); const report = await coach.summarizeToday(); if (report) { setSelectedSummary(report); setStage('summary'); } else setStage('chat'); };
+  const pause = () => { onStopSpeech(); coach.cancel(); coach.setError(''); setStage('paused'); };
   const exercise = coach.practice?.exercises[question];
   const normalize = (value: string) => value.trim().toLocaleLowerCase().replace(/[.!?]+$/, '');
   const correct = Boolean(exercise && normalize(answer) === normalize(exercise.answer));
@@ -83,11 +71,12 @@ export function CoachMode({ coach, speaking, ieltsScore, initialStage = 'chat', 
       </div></div>
       {coach.tip && <p className="coach-tip"><strong>Quick tip</strong> {coach.tip}</p>}{coach.error && <p className="coach-error" role="alert">{coach.error}</p>}
       <form className="coach-compose" onSubmit={submit}><Input value={draft} onChange={event => setDraft(event.target.value)} placeholder="Say something in English…" maxLength={2000} disabled={coach.busy || coach.recording} aria-label="Your English reply"/><Button type="submit" variant="secondary" disabled={!draft.trim() || coach.busy || coach.recording} aria-label="Send"><Send /></Button></form>
-      <Button variant="ghost" className="coach-summary-button" disabled={coach.busy || coach.recording || coach.history.length < 2} onClick={() => void summarize()}>总结今天的对话</Button>
-      <div className="coach-actions"><CoachRecordButton coach={coach}/><Button variant="outline" className="coach-end" disabled={coach.busy || coach.recording || coach.history.length < 2} onClick={() => void summarize()}>End conversation</Button></div>
-      <p className="coach-record-hint">Tap to keep recording · Hold and release to send</p>
+      <Button variant="ghost" className="coach-summary-button" disabled={coach.busy || coach.recording || coach.history.length < 2} onClick={() => void summarize()}>回顾本次对话</Button>
+      <div className="coach-actions"><RecordButton recording={coach.recording} busy={coach.busy} disabled={!coach.ready} onStart={() => { onStopSpeech(); return coach.startRecording(); }} onStop={coach.stopRecording}/><Button variant="outline" className="coach-end" disabled={!coach.ready || coach.busy} onClick={pause}>先聊到这里</Button></div>
+      <p className="coach-record-hint">按住说话，松开发送，上滑取消 · 点击可持续录音</p>
     </>}
-    {stage === 'summarizing' && <section className="coach-offer"><LoaderCircle className="summary-spinner spinning"/><h1>Creating today’s recall…</h1><p>Lucky is finding your key vocabulary, grammar and next focus.</p></section>}
+    {stage === 'paused' && <section className="coach-offer"><h1>先聊到这里</h1><p>随时回来，接着刚才的话题聊。</p><Button onClick={() => setStage('chat')}>继续聊天</Button><Button variant="outline" disabled={coach.history.length < 2} onClick={() => void summarize()}>回顾本次对话</Button><Button variant="ghost" onClick={onBack}>返回首页</Button></section>}
+    {stage === 'summarizing' && <section className="coach-offer"><LoaderCircle className="summary-spinner spinning"/><h1>正在整理对话回顾…</h1><p>Lucky is finding your key vocabulary, grammar and next focus.</p></section>}
     {stage === 'summary' && selectedSummary && <section className="coach-summary"><header><div><small>DAILY RECALL · {selectedSummary.date}</small><h1><Sparkles/>Your conversation, in focus</h1><span>{selectedSummary.minutes} min</span></div><Button variant="ghost" onClick={() => exportRecall(selectedSummary)} aria-label="Export today’s recall"><Download/>Export</Button></header><RecallTables report={selectedSummary}/><div className="summary-actions"><Button onClick={() => void startPractice()} disabled={coach.busy}>{coach.busy ? <LoaderCircle className="spinning"/> : 'Practise this conversation'}</Button><Button variant="outline" onClick={() => { coach.clearSession(); setStage('chat'); void coach.beginSession(); }}>New conversation</Button></div></section>}
     {stage === 'dashboard' && <section className="coach-dashboard"><header><div><small>PERSONAL CENTER</small><h1>Your learning</h1></div><Button variant="ghost" onClick={onSettings}><Settings2/>设置</Button></header>
       <section className="learning-levels" aria-label="英语水平"><article><span>设定的英语水平</span><strong>{ieltsScore ? `IELTS ${ieltsScore}` : '尚未设定'}</strong><Button variant="ghost" onClick={onIelts}>设定雅思成绩</Button></article><article><span>最近评估的水平</span>{coach.latestAssessment ? <><strong>IELTS {coach.latestAssessment.score}</strong><p>{coach.latestAssessment.conclusion}</p><small>Grammar · {coach.latestAssessment.grammar}<br/>Vocabulary · {coach.latestAssessment.vocabulary}<br/>Fluency · {coach.latestAssessment.fluency}</small></> : <><strong>尚未评估</strong><p>练习满 2 小时后，Lucky 会按 IELTS 的语法、词汇和流利度标准进行一次评估。</p><small>{Math.floor(coach.totalPracticeSeconds / 60)} / 120 分钟</small></>}</article></section>

@@ -113,17 +113,6 @@ test('managed service architecture keeps API keys on the server and uses the con
   assert.match(page, /lang\.startsWith\('zh'\) && 'speechSynthesis' in window/);
 });
 
-test('voice interactions use two times the customer Token allowance while preserving the actual model cost', async () => {
-  const [account, translate, coach] = await Promise.all([
-    readFile(new URL('../lib/server/account.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../app/api/translate/route.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../app/api/coach/route.ts', import.meta.url), 'utf8'),
-  ]);
-  assert.match(account, /chargedTokens = billable \? Math\.ceil\(tokens \* multiplier\) : 0/);
-  assert.match(account, /actualTokens: tokens, tokenMultiplier: multiplier/);
-  assert.match(translate, /audio instanceof File \? 2 : 1/);
-  assert.match(coach, /body\.voiceMode === true \? 2 : 1/);
-});
 test('coach recalls do not turn possible speech-recognition noise into corrections', async () => {
   const [coach, coachMode] = await Promise.all([
     readFile(new URL('../lib/coach.ts', import.meta.url), 'utf8'),

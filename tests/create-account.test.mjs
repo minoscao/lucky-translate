@@ -15,13 +15,13 @@ const { createAccount } = await import(createUrl);
 
 test('shared account creation hashes passwords, applies plans, preserves pending registration and prevents duplicates', async () => {
   const sqlite = new DatabaseSync(':memory:');
-  sqlite.exec('CREATE TABLE users(id TEXT PRIMARY KEY,username TEXT UNIQUE,email TEXT UNIQUE,password_hash TEXT,status TEXT,level TEXT,daily_seconds_limit INTEGER,monthly_seconds_limit INTEGER,daily_token_limit INTEGER,monthly_price_cents INTEGER,storage_limit_bytes INTEGER,membership_expires_at INTEGER,admin_note TEXT,created_at INTEGER,updated_at INTEGER)');
+  sqlite.exec('CREATE TABLE users(id TEXT PRIMARY KEY,username TEXT UNIQUE,email TEXT UNIQUE,password_hash TEXT,status TEXT,level TEXT,daily_seconds_limit INTEGER,monthly_seconds_limit INTEGER,daily_token_limit INTEGER,monthly_token_limit INTEGER,monthly_price_cents INTEGER,storage_limit_bytes INTEGER,membership_expires_at INTEGER,admin_note TEXT,created_at INTEGER,updated_at INTEGER)');
   globalThis.__accountsDb = { prepare(sql) { let args; return { bind(...values) { args=Object.fromEntries(values.map((v,i)=>[String(i+1),v]));return this; }, async first() { return sqlite.prepare(sql).get(args); }, async run() { return { meta: sqlite.prepare(sql).run(args) }; } }; } };
   const identity = { email: ' Trial@Example.test ', username: 'Trial', password: 'LocalTestOnly123' };
   try {
     const id = await createAccount(identity, { level:'lv1', status:'active' });
     const row = sqlite.prepare('SELECT * FROM users WHERE id=?').get(id);
-    assert.equal(row.email,'trial@example.test'); assert.equal(row.status,'active'); assert.equal(row.daily_seconds_limit,600); assert.equal(row.storage_limit_bytes,104857600);
+    assert.equal(row.email,'trial@example.test'); assert.equal(row.status,'active'); assert.equal(row.daily_seconds_limit,720); assert.equal(row.storage_limit_bytes,104857600);
     assert.notEqual(row.password_hash,identity.password); assert.equal(await verifyPassword(identity.password,row.password_hash),true);
     await assert.rejects(createAccount(identity), {status:409});
     await assert.rejects(createAccount({...identity,email:'other@example.test',username:'TRIAL'}), {status:409});
@@ -34,6 +34,7 @@ test('shared account creation hashes passwords, applies plans, preserves pending
       const planId=await createAccount({...identity,email:`${level}@example.test`,username:level},{level,status:'active'});
       const plan=sqlite.prepare('SELECT * FROM users WHERE id=?').get(planId);
       assert.equal(plan.daily_seconds_limit,daily);assert.equal(plan.monthly_seconds_limit,monthly);
+      assert.equal(plan.daily_token_limit,level==='lv2'?360000:0);assert.equal(plan.monthly_token_limit,level==='lv3'?18000000:0);
     }
   } finally { sqlite.close(); delete globalThis.__accountsDb; }
 });

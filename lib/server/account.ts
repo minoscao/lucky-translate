@@ -22,7 +22,7 @@ export async function accountSnapshot(account: Account) {
   return {
     id: account.id, username: account.username, email: account.email, status: expired ? 'expired' : account.status, level: account.level,
     membershipExpiresAt: account.membership_expires_at, monthlyPrice: account.monthly_price_cents / 100, costMultiplier: Math.max(.1, Math.min(100, Number(multiplierRow?.value) || 1)),
-    limits: { dailySeconds: account.daily_seconds_limit, monthlySeconds: account.monthly_seconds_limit, dailyTokens: account.daily_token_limit },
+    limits: { dailySeconds: account.daily_seconds_limit, monthlySeconds: account.monthly_seconds_limit, dailyTokens: account.daily_token_limit, monthlyTokens: account.monthly_token_limit || 0 },
     usage: { todayTokens: today?.tokens || 0, todayCost: (today?.cost_micros || 0) / 1_000_000, todaySeconds: today?.active_seconds || 0, todayTrainingSeconds: today?.training_seconds || 0, todayTranslationSeconds: today?.translation_seconds || 0, monthTokens: monthUsage?.tokens || 0, monthCost: (monthUsage?.cost_micros || 0) / 1_000_000, monthSeconds: monthUsage?.active_seconds || 0, monthTrainingSeconds: monthUsage?.training_seconds || 0, monthTranslationSeconds: monthUsage?.translation_seconds || 0, totalTokens: totalUsage?.tokens || 0, totalCost: (totalUsage?.cost_micros || 0) / 1_000_000, totalSeconds: totalUsage?.active_seconds || 0, totalTrainingSeconds: totalUsage?.training_seconds || 0 },
     storage: { retentionMonths: retentionMonths(account.level, await getRetentionRules()), bytes: storageBytes, limitBytes: account.storage_limit_bytes, warning: storageRatio >= .85, ratio: storageRatio },
   };
@@ -30,26 +30,27 @@ export async function accountSnapshot(account: Account) {
 
 export async function enforceLimits(account: Account) {
   const snapshot = await accountSnapshot(account);
-  if (snapshot.limits.dailyTokens > 0 && snapshot.usage.todayTokens >= snapshot.limits.dailyTokens) throw Object.assign(new Error('今日服务额度已达上限，与 Points 分别计算；请联系管理员或明天继续'), { status: 429 });
+  if (snapshot.limits.dailyTokens > 0 && snapshot.usage.todayTokens >= snapshot.limits.dailyTokens) throw Object.assign(new Error(`今日 Token 用量 ${snapshot.usage.todayTokens.toLocaleString('en-US')} / ${snapshot.limits.dailyTokens.toLocaleString('en-US')}，已达到单独设置的服务上限；小鱼干 余额不受影响。请联系管理员调整额度或明天继续。`), { status: 429 });
+  if (snapshot.limits.monthlyTokens > 0 && snapshot.usage.monthTokens >= snapshot.limits.monthlyTokens) throw Object.assign(new Error(`本月 Token 用量 ${snapshot.usage.monthTokens.toLocaleString('en-US')} / ${snapshot.limits.monthlyTokens.toLocaleString('en-US')}，本月服务额度已用完。请联系管理员调整额度或下月继续。`), { status: 429 });
   if (snapshot.limits.dailySeconds > 0 && snapshot.usage.todaySeconds >= snapshot.limits.dailySeconds) throw Object.assign(new Error('今天的使用时间已用完，明天可以继续使用'), { status: 429 });
   if (snapshot.limits.monthlySeconds > 0 && snapshot.usage.monthSeconds >= snapshot.limits.monthlySeconds) throw Object.assign(new Error('本月的使用时间已用完，下月可以继续使用'), { status: 429 });
   return snapshot;
 }
 
 export type TokenUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_cache_hit_tokens?: number };
-export async function recordDeepSeekUsage(account: Account, feature: string, usage?: TokenUsage, tokenMultiplier = 1, billable = true) {
+export async function recordDeepSeekUsage(account: Account, feature: string, usage?: TokenUsage, billable = true) {
   const { day, hour } = periodKeys(), peak = (hour >= 9 && hour < 12) || (hour >= 14 && hour < 18);
   const input = Math.max(0, usage?.prompt_tokens || 0), output = Math.max(0, usage?.completion_tokens || 0), cached = Math.min(input, Math.max(0, usage?.prompt_cache_hit_tokens || 0));
   const rates = peak ? { period: 'peak', cached: .014, input: .44, output: 1.32 } : { period: 'off_peak', cached: .007, input: .22, output: .66 };
-  const tokens = usage?.total_tokens || input + output, multiplier = tokenMultiplier >= 2 ? 2 : 1, chargedTokens = billable ? Math.ceil(tokens * multiplier) : 0, cost = ((input - cached) * rates.input + cached * rates.cached + output * rates.output) / 1_000_000;
+  const tokens = usage?.total_tokens || input + output, chargedTokens = billable ? tokens : 0, cost = ((input - cached) * rates.input + cached * rates.cached + output * rates.output) / 1_000_000;
   const costMicros = Math.max(0, Math.round(cost * 1_000_000)), now = Date.now(), eventId = crypto.randomUUID();
   await getDb().batch([
     getDb().prepare(`INSERT INTO usage_events (id, user_id, feature, provider, model, input_tokens, cached_tokens, output_tokens, total_tokens, cost_micros, price_snapshot, created_at)
-      VALUES (?1, ?2, ?3, 'deepseek', 'deepseek-v4-flash', ?4, ?5, ?6, ?7, ?8, ?9, ?10)`).bind(eventId, account.id, feature, input, cached, output, chargedTokens, costMicros, JSON.stringify({ ...rates, actualTokens: tokens, tokenMultiplier: multiplier, billable }), now),
+      VALUES (?1, ?2, ?3, 'deepseek', 'deepseek-v4-flash', ?4, ?5, ?6, ?7, ?8, ?9, ?10)`).bind(eventId, account.id, feature, input, cached, output, chargedTokens, costMicros, JSON.stringify({ ...rates, actualTokens: tokens, billable }), now),
     getDb().prepare(`INSERT INTO usage_daily (user_id, day, tokens, cost_micros, active_seconds, training_seconds, translation_seconds, updated_at) VALUES (?1, ?2, ?3, ?4, 0, 0, 0, ?5)
       ON CONFLICT(user_id, day) DO UPDATE SET tokens = tokens + excluded.tokens, cost_micros = cost_micros + excluded.cost_micros, updated_at = excluded.updated_at`).bind(account.id, day, chargedTokens, costMicros, now),
   ]);
-  return { eventId, tokens: chargedTokens, actualTokens: tokens, tokenMultiplier: multiplier, cost, inputTokens: input, cachedTokens: cached, outputTokens: output, period: rates.period };
+  return { eventId, tokens: chargedTokens, actualTokens: tokens, cost, inputTokens: input, cachedTokens: cached, outputTokens: output, period: rates.period };
 }
 
 export async function recordServiceCost(account: Account, feature: string, provider: string, model: string, cost: number, priceSnapshot: object) {

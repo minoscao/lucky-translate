@@ -73,15 +73,16 @@ export async function POST(request: Request) {
     if (body.action === 'update_user') {
       const id = typeof body.id === 'string' ? body.id : '', level = body.level === 'lv1' || body.level === 'lv2' || body.level === 'lv3' ? body.level : null;
       const current = await getDb().prepare('SELECT * FROM users WHERE id = ?1').bind(id).first<Account>(); if (!current) return json({ error: '没有找到这个用户' }, 404);
-      const defaults = level ? PLAN_DEFAULTS[level] : { dailySeconds: 0, monthlySeconds: 0, dailyTokens: 0, priceCents: 0 };
+      const defaults = level ? PLAN_DEFAULTS[level] : { dailySeconds: 0, monthlySeconds: 0, dailyTokens: 0, monthlyTokens: 0, priceCents: 0 };
       const number = (value: unknown, fallback: number, max: number) => typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(max, Math.round(value))) : fallback;
       const status = body.status === 'active' || body.status === 'pending' || body.status === 'suspended' ? body.status : current.status;
       const dailySeconds = number(body.dailySeconds, level ? defaults.dailySeconds : current.daily_seconds_limit, 86400), monthlySeconds = number(body.monthlySeconds, level ? defaults.monthlySeconds : current.monthly_seconds_limit, 744 * 3600);
       const dailyTokens = number(body.dailyTokens, level ? defaults.dailyTokens : current.daily_token_limit, 100_000_000), priceCents = number(body.monthlyPriceCents, level ? defaults.priceCents : current.monthly_price_cents, 1_000_000);
+      const monthlyTokens = number(body.monthlyTokens, level ? defaults.monthlyTokens : current.monthly_token_limit, 1_000_000_000);
       const expires = body.membershipExpiresAt === null ? null : typeof body.membershipExpiresAt === 'number' && Number.isFinite(body.membershipExpiresAt) ? Math.max(Date.now(), Math.round(body.membershipExpiresAt)) : current.membership_expires_at;
       const note = typeof body.adminNote === 'string' ? body.adminNote.trim().slice(0, 500) : current.admin_note, now = Date.now();
-      await getDb().prepare(`UPDATE users SET status = ?1, level = ?2, daily_seconds_limit = ?3, monthly_seconds_limit = ?4, daily_token_limit = ?5, monthly_price_cents = ?6, membership_expires_at = ?7, admin_note = ?8, updated_at = ?9 WHERE id = ?10`)
-        .bind(status, level || current.level, dailySeconds, monthlySeconds, dailyTokens, priceCents, expires, note, now, id).run();
+      await getDb().prepare(`UPDATE users SET status = ?1, level = ?2, daily_seconds_limit = ?3, monthly_seconds_limit = ?4, daily_token_limit = ?5, monthly_price_cents = ?6, membership_expires_at = ?7, admin_note = ?8, updated_at = ?9, monthly_token_limit = ?11 WHERE id = ?10`)
+        .bind(status, level || current.level, dailySeconds, monthlySeconds, dailyTokens, priceCents, expires, note, now, id, monthlyTokens).run();
       return json({ authenticated: true, saved: true, ...(await dashboard(request)) });
     }
     if (body.action === 'reset_password') {
