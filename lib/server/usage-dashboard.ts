@@ -1,29 +1,53 @@
 import { getDb } from '@/db';
 import { periodKeys } from './account';
-import type { UsageDashboardData, UsageMetrics, UsagePeriod } from '@/lib/usage-dashboard';
+import { emptyUsage } from '@/lib/usage-dashboard';
+import type { UsageDashboardData, UsageDashboardResponse, UsageMetrics, UsagePeriod } from '@/lib/usage-dashboard';
+
+const blankDashboard = (updatedAt: number): UsageDashboardData => ({ updatedAt, periods: { today: emptyUsage(), month: emptyUsage(), total: emptyUsage() } });
+
+// Six grouped queries regardless of client count. All views use the same records.
+async function readUsage(userId: string | null): Promise<UsageDashboardResponse> {
+  const db = getDb(), { day, month } = periodKeys(), updatedAt = Date.now();
+  const clients: Record<string, UsageDashboardData> = {};
+  const results = await Promise.all((['today', 'month', 'total'] as UsagePeriod[]).map(async period => {
+    const fromDay = period === 'today' ? day : period === 'month' ? `${month}-01` : '';
+    const fromTime = period === 'total' ? 0 : Date.parse(`${fromDay}T00:00:00+08:00`);
+    const [time, events] = await Promise.all([
+      db.prepare(`SELECT user_id, SUM(training_seconds) conversationSeconds, SUM(translation_seconds) translationSeconds,
+        SUM(active_seconds) totalSeconds FROM usage_daily
+        WHERE (?1 IS NULL OR user_id=?1) AND day>=?2 AND day<=?3 GROUP BY user_id`).bind(userId, fromDay, day).all<{ user_id: string; conversationSeconds: number; translationSeconds: number; totalSeconds: number }>(),
+      db.prepare(`SELECT user_id,
+        SUM(CASE WHEN provider='deepseek' THEN COALESCE(json_extract(price_snapshot,'$.actualTokens'), input_tokens+output_tokens) ELSE 0 END) actualTokens,
+        SUM(input_tokens) inputTokens, SUM(output_tokens) outputTokens, SUM(cached_tokens) cachedTokens,
+        SUM(cost_micros) costMicros,
+        SUM(CASE WHEN provider='deepseek' AND (json_extract(price_snapshot,'$.usageReported')=0 OR
+          (json_extract(price_snapshot,'$.usageReported') IS NULL AND input_tokens+output_tokens=0 AND COALESCE(json_extract(price_snapshot,'$.actualTokens'),0)=0))
+          THEN 1 ELSE 0 END) unreportedRequests
+        FROM usage_events WHERE (?1 IS NULL OR user_id=?1) AND provider!='membership' AND created_at>=?2 AND created_at<=?3 GROUP BY user_id`)
+        .bind(userId, fromTime, updatedAt).all<{ user_id: string } & Pick<UsageMetrics, 'actualTokens' | 'inputTokens' | 'outputTokens' | 'cachedTokens' | 'unreportedRequests' | 'costMicros'>>(),
+    ]);
+    return { period, time: time.results, events: events.results };
+  }));
+  for (const { period, time, events } of results) {
+    for (const { user_id, ...values } of [...time, ...events]) {
+      clients[user_id] ??= blankDashboard(updatedAt);
+      Object.assign(clients[user_id].periods[period], values);
+    }
+    for (const client of Object.values(clients)) {
+      const usage = client.periods[period];
+      usage.recapSeconds = Math.max(0, usage.totalSeconds - usage.conversationSeconds - usage.translationSeconds);
+    }
+  }
+  const dashboard = blankDashboard(updatedAt);
+  for (const client of Object.values(clients)) for (const period of ['today', 'month', 'total'] as UsagePeriod[]) {
+    for (const key of Object.keys(client.periods[period]) as (keyof UsageMetrics)[]) dashboard.periods[period][key] += client.periods[period][key];
+  }
+  return { dashboard, clients };
+}
 
 export async function usageDashboard(userId: string): Promise<UsageDashboardData> {
-  const db = getDb(), { day, month } = periodKeys();
-  const dayStart = Date.parse(`${day}T00:00:00+08:00`), monthStart = Date.parse(`${month}-01T00:00:00+08:00`);
-  // Full account history, independent of the recent-event list and quota resets.
-  const periods = await Promise.all((['today', 'month', 'total'] as UsagePeriod[]).map(async period => {
-    const fromDay = period === 'today' ? day : period === 'month' ? `${month}-01` : '';
-    const fromTime = period === 'today' ? dayStart : period === 'month' ? monthStart : 0;
-    const [time, tokens] = await Promise.all([
-      db.prepare(`SELECT COALESCE(SUM(training_seconds),0) conversationSeconds,
-        COALESCE(SUM(translation_seconds),0) translationSeconds,
-        COALESCE(SUM(active_seconds),0) totalSeconds
-        FROM usage_daily WHERE user_id=?1 AND day>=?2 AND day<=?3`).bind(userId, fromDay, day).first<Pick<UsageMetrics, 'conversationSeconds' | 'translationSeconds' | 'totalSeconds'>>(),
-      db.prepare(`SELECT COALESCE(SUM(COALESCE(json_extract(price_snapshot,'$.actualTokens'), input_tokens+output_tokens)),0) actualTokens,
-        COALESCE(SUM(input_tokens),0) inputTokens, COALESCE(SUM(output_tokens),0) outputTokens,
-        COALESCE(SUM(cached_tokens),0) cachedTokens,
-        COALESCE(SUM(CASE WHEN json_extract(price_snapshot,'$.usageReported')=0 OR
-          (json_extract(price_snapshot,'$.usageReported') IS NULL AND input_tokens+output_tokens=0 AND COALESCE(json_extract(price_snapshot,'$.actualTokens'),0)=0)
-          THEN 1 ELSE 0 END),0) unreportedRequests
-        FROM usage_events WHERE user_id=?1 AND provider='deepseek' AND created_at>=?2`).bind(userId, fromTime).first<Pick<UsageMetrics, 'actualTokens' | 'inputTokens' | 'outputTokens' | 'cachedTokens' | 'unreportedRequests'>>(),
-    ]);
-    const conversationSeconds = time?.conversationSeconds || 0, translationSeconds = time?.translationSeconds || 0, totalSeconds = time?.totalSeconds || 0;
-    return [period, { conversationSeconds, translationSeconds, totalSeconds, recapSeconds: Math.max(0, totalSeconds - conversationSeconds - translationSeconds), actualTokens: tokens?.actualTokens || 0, inputTokens: tokens?.inputTokens || 0, outputTokens: tokens?.outputTokens || 0, cachedTokens: tokens?.cachedTokens || 0, unreportedRequests: tokens?.unreportedRequests || 0 }] as const;
-  }));
-  return { updatedAt: Date.now(), periods: Object.fromEntries(periods) as UsageDashboardData['periods'] };
+  return (await readUsage(userId)).dashboard;
+}
+export async function usageDirectory(): Promise<UsageDashboardResponse> {
+  return readUsage(null);
 }

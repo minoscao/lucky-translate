@@ -15,7 +15,9 @@ import { TimeEntry, TimeLedger } from '@/components/time-ledger';
 import { DEFAULT_RETENTION, RetentionRules } from '@/lib/retention';
 import { TextTimeRules } from '@/lib/text-time';
 import { PLAN_DEFAULTS } from '@/lib/membership-plans';
-import { UsageDashboard } from '@/components/usage-dashboard';
+import { UsageDashboard, UsageDashboardView, useUsageDashboard } from '@/components/usage-dashboard';
+
+import { emptyUsage, usageMinutes, usageCost, usageNumber, type UsagePeriod } from '@/lib/usage-dashboard';
 
 type AdminUser = AccountSnapshot & { adminNote: string; createdAt: number; lastLoginAt: number | null; timeLedger: TimeEntry[] };
 type Payment = { id: string; user_id: string; username: string; amount_cents: number; currency: string; status: string; note: string; paid_at: number; created_at: number };
@@ -37,7 +39,7 @@ function UserEditor({ user, refresh }: { user?: AdminUser; refresh: (data: Admin
   const [dailyTokens, setDailyTokens] = useState(String(user?.limits.dailyTokens ?? PLAN_DEFAULTS.lv1.dailyTokens)), [monthlyTokens, setMonthlyTokens] = useState(String(user?.limits.monthlyTokens ?? PLAN_DEFAULTS.lv1.monthlyTokens)), [price, setPrice] = useState(String((user?.monthlyPrice ?? 0))), [note, setNote] = useState(user?.adminNote || '');
   const [expires, setExpires] = useState(user?.membershipExpiresAt ? new Date(user.membershipExpiresAt).toISOString().slice(0, 10) : '');
   const [saving, setSaving] = useState(false), [message, setMessage] = useState('');
-  const [email, setEmail] = useState(''), [username, setUsername] = useState(''), [initialPassword, setInitialPassword] = useState('');
+  const [email, setEmail] = useState(user?.email || ''), [username, setUsername] = useState(user?.username || ''), [initialPassword, setInitialPassword] = useState('');
   const applyPlan = (value: string) => {
     setLevel(value); setStatus('active');
     const plan = PLAN_DEFAULTS[value as keyof typeof PLAN_DEFAULTS];
@@ -47,22 +49,22 @@ function UserEditor({ user, refresh }: { user?: AdminUser; refresh: (data: Admin
     if (saving) return;
     setSaving(true); setMessage('');
     try {
-      const membershipExpiresAt = expires ? new Date(`${expires}T23:59:59+08:00`).getTime() : null;
+      const membershipExpiresAt = user && expires === (user.membershipExpiresAt ? new Date(user.membershipExpiresAt).toISOString().slice(0, 10) : '') ? user.membershipExpiresAt : expires ? new Date(`${expires}T23:59:59+08:00`).getTime() : null;
       const data = await accountRequest<AdminData>('/api/admin', { method: 'POST', body: JSON.stringify({ action: user ? 'update_user' : 'create_user', id: user?.id, email, username, password: initialPassword, level, status, dailySeconds: Number(dailyFish) * SECONDS_PER_FISH, monthlySeconds: Number(monthlyFish) * SECONDS_PER_FISH, dailyTokens: Number(dailyTokens), monthlyTokens: Number(monthlyTokens), monthlyPriceCents: Number(price) * 100, membershipExpiresAt, adminNote: note }) });
-      setInitialPassword(''); refresh(data); setMessage(user ? '已保存' : '客户已创建');
+      setInitialPassword(''); refresh(data); setMessage(user ? (user.email !== email.trim().toLowerCase() ? '已保存，客户请用新邮箱登录。' : '已保存') : '客户已创建');
     } catch (error) { setMessage(error instanceof Error ? error.message : '保存失败'); } finally { setSaving(false); }
   };
   return <form className="admin-user-card" onSubmit={event => { event.preventDefault(); void save(); }}>
     {user && <UsageDashboard key={user.id} url={`/api/admin/usage?id=${encodeURIComponent(user.id)}`} />}
     <fieldset disabled={saving} className="admin-editor-fields">
     {user && <><header><div><strong>{user.username}</strong><span>{user.email || '尚未绑定邮箱'} · 最近登录 {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleDateString('zh-CN') : '尚未登录'}</span></div><span className={`member-state ${user.status}`}>{stateLabel(user.status)} · {user.level.toUpperCase()}</span></header>
-    <div className="admin-user-metrics"><span>今日计费 <b>{formatPoints(user.usage.todaySeconds)}</b></span><span>训练 / 翻译 <b>{formatPoints(user.usage.todayTrainingSeconds)} / {formatPoints(user.usage.todayTranslationSeconds)}</b></span><span>今日额度 Token <b>{user.usage.todayTokens.toLocaleString()}</b></span><span>今日成本 <b>{money(user.usage.todayCost)}</b></span><span>云空间 <b>{bytes(user.storage.bytes)} / {bytes(user.storage.limitBytes)}</b></span></div>
+    <div className="account-storage"><span>云空间</span><strong>{bytes(user.storage.bytes)} / {bytes(user.storage.limitBytes)}</strong></div>
     </>}
-    {!user && <div className="admin-user-fields">
-      <label>邮箱<Input type="email" required maxLength={254} value={email} autoComplete="off" onChange={event => { const value = event.target.value; setEmail(value); if (!initialPassword || initialPassword === defaultClientPassword(email)) setInitialPassword(defaultClientPassword(value)); if (!username || username === email.split('@')[0]) setUsername(value.split('@')[0]); }} /></label>
+    <div className="admin-user-fields">
+      <label>邮箱<Input type="email" required={!user || Boolean(user.email)} maxLength={254} value={email} autoComplete="off" onChange={event => { const value = event.target.value; setEmail(value); if (!user && (!initialPassword || initialPassword === defaultClientPassword(email))) setInitialPassword(defaultClientPassword(value)); if (!user && (!username || username === email.split('@')[0])) setUsername(value.split('@')[0]); }} /></label>
       <label>用户名<Input required minLength={2} maxLength={24} value={username} autoComplete="off" onChange={event => setUsername(event.target.value)} /></label>
-      <label>初始密码<Input type="password" required minLength={8} maxLength={128} value={initialPassword} autoComplete="new-password" placeholder="按邮箱自动生成，可修改" onChange={event => setInitialPassword(event.target.value)} /></label>
-    </div>}
+      {!user && <label>初始密码<Input type="password" required minLength={8} maxLength={128} value={initialPassword} autoComplete="new-password" placeholder="按邮箱自动生成，可修改" onChange={event => setInitialPassword(event.target.value)} /></label>}
+    </div>
     <div className="admin-user-fields">
       <label>会员等级<Select disabled={saving} value={level} onValueChange={value => value && applyPlan(value)}><SelectTrigger><SelectValue>{level.toUpperCase()}</SelectValue></SelectTrigger><SelectContent><SelectItem value="lv1">Lv1 · 每日 10 条小鱼干</SelectItem><SelectItem value="lv2">Lv2 · 每日 100 条小鱼干</SelectItem><SelectItem value="lv3">Lv3 · 每月 5,000 条小鱼干</SelectItem></SelectContent></Select></label>
       <label>账户状态<Select disabled={saving} value={status} onValueChange={value => value && setStatus(value)}><SelectTrigger><SelectValue>{stateLabel(status)}</SelectValue></SelectTrigger><SelectContent><SelectItem value="pending">待激活</SelectItem><SelectItem value="active">已激活</SelectItem><SelectItem value="suspended">暂停</SelectItem></SelectContent></Select></label>
@@ -108,7 +110,22 @@ function BusinessSettings({ data, update, error }: { data: AdminData; update: (d
 }
 
 function ClientGrid({ users, select, create }: { users: AdminUser[]; select: (user: AdminUser) => void; create: () => void }) {
-  return <section className="admin-section clients-section"><header><div><p className="admin-eyebrow">CLIENT DIRECTORY</p><h2>客户</h2><span>按状态、套餐和今日使用情况快速扫描。点击任一行打开详情。</span></div><div className="admin-client-actions"><strong>{users.length} 位客户</strong><Button onClick={create}><UserPlus />新建客户</Button></div></header><div className="client-list"><div className="client-list-head"><span>客户</span><span>会员</span><span>今日使用</span><span>额度 Token / 成本</span><span>云空间</span><span /></div>{users.map(user => <button className="client-list-row" type="button" key={user.id} aria-label={`打开 ${user.username} 的客户详情`} onClick={() => select(user)}><span><strong>{user.username}</strong><small>{user.email || '尚未绑定邮箱'}</small></span><span><b className={`member-state ${user.status}`}>{user.level.toUpperCase()}</b><small>{stateLabel(user.status)}</small></span><span><strong>{formatPoints(user.usage.todaySeconds)}</strong><small>训练 {formatPoints(user.usage.todayTrainingSeconds)} · 翻译 {formatPoints(user.usage.todayTranslationSeconds)}</small></span><span><strong>{user.usage.todayTokens.toLocaleString()}</strong><small>{money(user.usage.todayCost)}</small></span><span><strong>{bytes(user.storage.bytes)}</strong><small>上限 {bytes(user.storage.limitBytes)}</small></span><span className="client-list-open">查看</span></button>)}</div></section>;
+  const { data, ...state } = useUsageDashboard('/api/admin/usage');
+  const [period, setPeriod] = useState<UsagePeriod>('total');
+  return <div className="admin-tab-content">
+    <section className="admin-section directory-overview"><UsageDashboardView data={data?.dashboard} {...state} period={period} onPeriodChange={setPeriod} title="All clients · Usage dashboard" /></section>
+    <section className="admin-section clients-section"><header><div><p className="admin-eyebrow">CLIENT DIRECTORY</p><h2>客户</h2><span>按上方所选时间范围显示。点击客户查看详情、修改资料。</span></div><div className="admin-client-actions"><strong>{users.length} 位客户</strong><Button onClick={create}><UserPlus />新建客户</Button></div></header>
+    <div className="client-list"><div className="client-list-head"><span>客户</span><span>会员</span><span>使用时间 / 小鱼干</span><span>真实 Token / 成本</span><span>云空间</span><span /></div>{users.map(user => {
+      const usage = data ? data.clients?.[user.id]?.periods[period] || emptyUsage() : undefined;
+      return <button className="client-list-row" type="button" key={user.id} aria-label={`打开 ${user.username} 的客户详情`} onClick={() => select(user)}>
+        <span><strong>{user.username}</strong><small>{user.email || '尚未绑定邮箱'}</small></span>
+        <span><b className={`member-state ${user.status}`}>{user.level.toUpperCase()}</b><small>{stateLabel(user.status)}</small></span>
+        <span><strong>{usage ? usageMinutes(usage.totalSeconds) : '—'}</strong><small>{usage ? `对话 ${usageMinutes(usage.conversationSeconds)} · 翻译 ${usageMinutes(usage.translationSeconds)}` : '等待用量数据'}</small><small>{usage ? formatPoints(usage.totalSeconds) : '—'}</small></span>
+        <span><strong>{usage ? `${usageNumber(usage.actualTokens)} tokens` : '—'}</strong><small>{usage ? usageCost(usage.costMicros) : '—'}</small>{Boolean(usage?.unreportedRequests) && <small>部分请求尚无 Token 数据</small>}</span>
+        <span><strong>{bytes(user.storage.bytes)}</strong><small>上限 {bytes(user.storage.limitBytes)}</small></span><span className="client-list-open">查看</span>
+      </button>;
+    })}</div></section>
+  </div>;
 }
 
 function Payments({ data, update, error }: { data: AdminData; update: (data: AdminData) => void; error: (value: string) => void }) {

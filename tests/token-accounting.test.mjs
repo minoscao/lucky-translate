@@ -9,7 +9,8 @@ const source = (await read('../lib/server/account.ts')).replace(/^import .*;\r?\
 const moduleSource = `const getDb=()=>globalThis.__tokenDb, getRetentionRules=async()=>({}), retentionMonths=()=>1;\n${source}`;
 const { recordDeepSeekUsage, enforceLimits, periodKeys } = await import('data:text/javascript;base64,' + Buffer.from(ts.transpile(moduleSource, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext })).toString('base64'));
 const dashboardSource = (await read('../lib/server/usage-dashboard.ts')).replace(/^import .*;\r?\n/gm, '');
-const { usageDashboard } = await import('data:text/javascript;base64,' + Buffer.from(ts.transpile(`const getDb=()=>globalThis.__tokenDb; const periodKeys=()=>globalThis.__dashboardPeriod; ${dashboardSource}`, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext })).toString('base64'));
+const sharedUsage = await read('../lib/usage-dashboard.ts');
+const { usageDashboard, usageDirectory } = await import('data:text/javascript;base64,' + Buffer.from(ts.transpile(`const getDb=()=>globalThis.__tokenDb; const periodKeys=()=>globalThis.__dashboardPeriod; ${sharedUsage} ${dashboardSource}`, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext })).toString('base64'));
 const schema = await read('../drizzle/0000_noisy_anthem.sql') + await read('../drizzle/0003_monthly_token_limit.sql');
 const planSource = await read('../lib/membership-plans.ts');
 const pointSource = (await read('../lib/points.ts')).replace(/^import .*;\r?\n/gm, '');
@@ -37,6 +38,7 @@ function setup() {
       return {
         bind(...values) { args = Object.fromEntries(values.map((v, i) => [String(i + 1), v])); return this; },
         async first() { return sqlite.prepare(sql).get(args) || null; },
+        async all() { return { results: sqlite.prepare(sql).all(args) }; },
         async run() { return { meta: sqlite.prepare(sql).run(args) }; },
       };
     },
@@ -83,7 +85,7 @@ test('dashboard totals use complete isolated history and real tokens including f
     event.run('other', 'other', 9000, 0, 999, '{}', Date.parse('2026-09-11T00:00:00+08:00'));
     event.run('missing', 'test', 0, 0, 0, JSON.stringify({ usageReported: false }), Date.parse('2026-09-11T00:00:00+08:00'));
     const { periods } = await usageDashboard('test');
-    assert.deepEqual(periods.today, { conversationSeconds: 360, translationSeconds: 240, recapSeconds: 60, totalSeconds: 660, actualTokens: 2460, inputTokens: 2050, cachedTokens: 820, outputTokens: 410, unreportedRequests: 1 });
+    assert.deepEqual(periods.today, { conversationSeconds: 360, translationSeconds: 240, recapSeconds: 60, totalSeconds: 660, actualTokens: 2460, inputTokens: 2050, cachedTokens: 820, outputTokens: 410, unreportedRequests: 1, costMicros: 206 });
     assert.equal(periods.month.actualTokens, 2485);
     assert.equal(periods.total.actualTokens, 2520);
     assert.equal(periods.month.totalSeconds, 780);
@@ -91,6 +93,16 @@ test('dashboard totals use complete isolated history and real tokens including f
     assert.equal((await usageDashboard('empty')).periods.total.actualTokens, 0);
     event.run('new', 'test', 5, 2, 3, JSON.stringify({ actualTokens: 8, usageReported: true }), Date.parse('2026-09-11T01:00:00+08:00'));
     assert.equal((await usageDashboard('test')).periods.total.actualTokens, 2528);
+    db.sqlite.exec("INSERT INTO usage_events(id,user_id,feature,provider,model,cost_micros,price_snapshot,created_at) VALUES('audio','test','speech','cloudflare','whisper',370,'{}',1789092000000)");
+    const directory = await usageDirectory();
+    const individual = await usageDashboard('test');
+    assert.deepEqual(directory.clients.test.periods, individual.periods);
+    assert.equal(directory.clients.test.periods.total.costMicros, 579);
+    assert.equal(directory.dashboard.periods.total.costMicros, 580);
+    assert.equal(directory.dashboard.periods.total.actualTokens, 12527);
+    assert.equal(directory.dashboard.periods.total.totalSeconds, 10839);
+    assert.equal(directory.clients.test.periods.total.actualTokens, 2528);
+
   } finally { db.close(); delete globalThis.__dashboardPeriod; }
 });
 
