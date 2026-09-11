@@ -57,11 +57,11 @@ export async function POST(request: Request) {
     }
     if (action === 'change-password') {
       const account = await getAccount(request), currentPassword = typeof body.currentPassword === 'string' ? body.currentPassword : '', nextPassword = typeof body.nextPassword === 'string' ? body.nextPassword : '';
-      if (!account) return json({ error: '请先登录' }, 401);
+      if (!account) return json({ error: 'Please log in first.' }, 401);
       await limitAuth(request, 'change-password', account.id);
       validateNewPassword(nextPassword, body.confirmPassword);
       const row = await getDb().prepare('SELECT password_hash FROM users WHERE id = ?1').bind(account.id).first<{ password_hash: string }>();
-      if (!row || !await verifyPassword(currentPassword, row.password_hash)) return json({ error: '当前密码不正确' }, 401);
+      if (!row || !await verifyPassword(currentPassword, row.password_hash)) return json({ error: 'Your current password is incorrect.' }, 401);
       await ensureAuthTables();
       await getDb().batch([
         getDb().prepare('UPDATE users SET password_hash = ?1, updated_at = ?2 WHERE id = ?3').bind(await hashPassword(nextPassword), Date.now(), account.id),

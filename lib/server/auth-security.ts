@@ -25,13 +25,13 @@ export async function limitAuth(request: Request, action: string, identifier = '
       ON CONFLICT(key) DO UPDATE SET attempts=CASE WHEN expires_at<=?3 THEN 1 ELSE attempts+1 END,
       expires_at=CASE WHEN expires_at<=?3 THEN excluded.expires_at ELSE expires_at END RETURNING attempts`)
       .bind(key, now + minutes * 60000, now).first<{ attempts: number }>();
-    if (!row || row.attempts > maximum) throw authError('尝试次数较多，请稍后再试', 429);
+    if (!row || row.attempts > maximum) throw authError('Too many attempts. Please try again later.', 429);
   }
   await db.prepare('DELETE FROM auth_limits WHERE expires_at < ?1').bind(now).run();
 }
 
 export function validateNewPassword(password: unknown, confirmation: unknown): string {
-  if (typeof password !== 'string' || password.length < 8 || password.length > 128) throw authError('密码需要 8–128 位');
-  if (password !== confirmation) throw authError('两次输入的新密码不一致');
+  if (typeof password !== 'string' || password.length < 8 || password.length > 128) throw authError('Your password must be 8–128 characters long.');
+  if (password !== confirmation) throw authError('The new passwords do not match.');
   return password;
 }

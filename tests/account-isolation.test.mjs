@@ -46,6 +46,66 @@ test('browser caches and late responses are bound to their original account', as
   } finally {globalThis.fetch=originalFetch; delete globalThis.localStorage;}
 });
 
+test('older mobile browsers support requests and cancellation without newer AbortSignal APIs', async () => {
+  const originalFetch = globalThis.fetch;
+  const any = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+  const throwIfAborted = Object.getOwnPropertyDescriptor(AbortSignal.prototype, 'throwIfAborted');
+  Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
+  Object.defineProperty(AbortSignal.prototype, 'throwIfAborted', { configurable: true, value: undefined });
+  const account = scope.createAccountScope('mobile');
+  try {
+    globalThis.fetch = async (_url, init) => {
+      assert.equal(init.headers.get('X-Lucky-Account'), 'mobile');
+      assert.equal(init.signal.aborted, false);
+      return Response.json({ records: ['saved'] });
+    };
+    assert.deepEqual(await account.request('/api/cloud', { signal: new AbortController().signal }), { records: ['saved'] });
+
+    const cancelled = new AbortController();
+    const reason = new DOMException('User cancelled', 'AbortError');
+    cancelled.abort(reason);
+    globalThis.fetch = () => assert.fail('Already cancelled requests must not be sent');
+    await assert.rejects(account.request('/api/cloud', { signal: cancelled.signal }), error => error === reason);
+
+    for (const source of ['caller', 'account']) {
+      const caller = new AbortController();
+      let sent;
+      globalThis.fetch = (_url, init) => {
+        sent = init.signal;
+        return new Promise((_resolve, reject) => sent.addEventListener('abort', () => reject(sent.reason), { once: true }));
+      };
+      const pending = account.request('/api/cloud', { signal: caller.signal });
+      if (source === 'caller') caller.abort(reason); else account.dispose();
+      assert.equal(sent.aborted, true);
+      await assert.rejects(pending, { name: 'AbortError' });
+      account.activate();
+    }
+
+    // Headers can arrive before the body. Neither caller cancellation nor a
+    // closed account may allow that late body into a reactivated workspace.
+    for (const source of ['caller', 'account']) {
+      const caller = new AbortController();
+      let finishBody, signal, bodyStarted;
+      const reading = new Promise(resolve => { bodyStarted = resolve; });
+      globalThis.fetch = async (_url, init) => {
+        signal = init.signal;
+        return { ok: true, status: 200, json: () => { bodyStarted(); return new Promise(resolve => { finishBody = resolve; }); } };
+      };
+      const pending = account.request('/api/cloud', { signal: caller.signal });
+      await reading;
+      if (source === 'caller') caller.abort(reason); else { account.dispose(); account.activate(); }
+      assert.equal(signal.aborted, true);
+      finishBody({ records: ['late private data'] });
+      await assert.rejects(pending, { name: 'AbortError' });
+    }
+  } finally {
+    account.dispose();
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(AbortSignal, 'any', any);
+    Object.defineProperty(AbortSignal.prototype, 'throwIfAborted', throwIfAborted);
+  }
+});
+
 function database() {
   const sqlite=new DatabaseSync(':memory:');
   sqlite.exec(`CREATE TABLE users(id TEXT PRIMARY KEY,status TEXT,level TEXT,membership_expires_at INTEGER,storage_limit_bytes INTEGER);
