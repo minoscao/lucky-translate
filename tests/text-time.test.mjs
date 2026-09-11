@@ -43,7 +43,9 @@ test('coach endpoint charges validated content only; empty, malformed and failed
   let route = await readFile(new URL('../app/api/coach/route.ts', import.meta.url), 'utf8');
   route = route.replace(/^import .*;\r?\n/gm, '');
   globalThis.__coachBillingTest = { content: JSON.stringify({ reply: 'Hello friend', tip: '', memory: {} }), calls: [], fail: false };
-  const mocks = `import {coachTimeBasis,parseCoachContent} from '${moduleUrl}';
+  const languageJs = ts.transpile(await readFile(new URL('../lib/coach-language.ts', import.meta.url), 'utf8'), { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext });
+  const languageUrl = 'data:text/javascript;base64,' + Buffer.from(languageJs).toString('base64');
+  const mocks = `import {assertCoachEnglish,COACH_LANGUAGE_POLICY} from '${languageUrl}'; import {coachTimeBasis,parseCoachContent} from '${moduleUrl}';
     const state=globalThis.__coachBillingTest;
     const sameOrigin=()=>true, requireAccount=async()=>({id:'test'}), readJson=request=>request.json(), getCoachSkill=async()=>'';
     const json=(body,status=200)=>Response.json(body,{status});

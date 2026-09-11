@@ -83,7 +83,7 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
         localStorage.setItem(JOURNAL_KEY, JSON.stringify(journalRef.current));
       } catch {}
       cloudReady.current = true; setReady(true);
-    }).catch(cause => { if (!hydration.signal.aborted && scope.active) setError(cause instanceof Error ? cause.message : '无法读取你的云端记录，请重试'); });
+    }).catch(cause => { if (!hydration.signal.aborted && scope.active) setError(cause instanceof Error ? cause.message : 'Could not load your saved conversations. Please try again.'); });
     return () => { hydration.abort(); cloudReady.current = false; };
   }, [scope]);
 
@@ -93,13 +93,13 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
     try {
       const result = await coachReplyDirect({ key: keyRef.current, history: messages, memory: nextMemory, turnStatus, newSession, signal: controller.signal });
       if (controller.signal.aborted || !scope.active) return false;
-      const reply = result.data.reply.trim(); if (!reply) throw new Error('English Coach 没有返回回复');
+      const reply = result.data.reply.trim(); if (!reply) throw new Error('English Coach did not return a reply.');
       const responseMemory = result.data.memory;
       const updatedMemory = responseMemory && typeof responseMemory === 'object' && !Array.isArray(responseMemory) ? cleanMemory({ ...nextMemory, ...Object.fromEntries(Object.entries(responseMemory).filter(([key, value]) => key === 'level' ? typeof value === 'string' : ['topics', 'strengths', 'focus', 'phrases'].includes(key) && Array.isArray(value))) }) : nextMemory;
       const updated = [...messages, { id: (messageId.current = Math.max(Date.now() * 1000 + Math.floor(Math.random() * 1000), messageId.current + 1)), createdAt: Date.now(), role: 'coach' as const, text: reply }];
       updateHistory(updated); updateMemory(updatedMemory); setTip(typeof result.data.tip === 'string' ? result.data.tip.trim() : ''); saveSession(updated, updatedMemory); applyUsage(result.usage);
       setSpeechRequest({ id: ++speechId.current, text: reply }); return true;
-    } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'English Coach 暂时无法回应'); return false; }
+    } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'English Coach is unavailable. Please try again.'); return false; }
     finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
   }, []);
 
@@ -120,10 +120,10 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
         void transcribeDirect(audio, keyRef.current, controller.signal).then(result => {
           if (controller.signal.aborted || !scope.active) return false;
           applyUsage(result.usage);
-          if (!result.text) { setError('没有听清，请再说一次'); return false; }
+          if (!result.text) { setError('I could not catch that. Please try again.'); return false; }
           if (abort.current === controller) { abort.current = undefined; setBusyState(false); }
           return submitLearner(result.text, true);
-        }).catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '语音识别失败'); })
+        }).catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not recognize your speech. Please try again.'); })
           .finally(() => { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } });
       }, onLevel: () => {}, onError: message => { setError(message); setRecordingState(false); },
     });
@@ -135,7 +135,7 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
   const startRecording = useCallback(async () => {
     if (!cloudReady.current || !scope.active || busyRef.current || recordingRef.current) return false;
     const attempt = ++recordingAttempt.current; setRecordingState(true);
-    setError(''); const started = await recorder.current?.start('hold', false).catch(cause => { if (attempt === recordingAttempt.current && scope.active) setError(cause instanceof Error ? cause.message : '无法开启麦克风'); return false; });
+    setError(''); const started = await recorder.current?.start('hold', false).catch(cause => { if (attempt === recordingAttempt.current && scope.active) setError(cause instanceof Error ? cause.message : 'Could not start the microphone.'); return false; });
     if (attempt !== recordingAttempt.current || !scope.active) return false;
     setRecordingState(Boolean(started)); return Boolean(started);
   }, []);
@@ -144,12 +144,12 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
     if (!cloudReady.current || !scope.active || busyRef.current) return false;
     const controller = new AbortController(); abort.current = controller; setBusyState(true); setError('');
     try { const result = await coachPracticeDirect({ key: keyRef.current, history: historyRef.current, memory: memoryRef.current, signal: controller.signal }); if (controller.signal.aborted || !scope.active) return false; setPractice(result.data); applyUsage(result.usage); return true; }
-    catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '无法生成练习'); return false; }
+    catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not prepare your practice.'); return false; }
     finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
   }, []);
   const summarizeToday = useCallback(async () => {
     if (!cloudReady.current || !scope.active || busyRef.current) return undefined;
-    if (!historyRef.current.some(message => message.role === 'learner')) { setError('先完成一小段对话，再生成今日总结'); return undefined; }
+    if (!historyRef.current.some(message => message.role === 'learner')) { setError('Have a short conversation first, then create a recap.'); return undefined; }
     const controller = new AbortController(); abort.current = controller; setBusyState(true); setError('');
     try {
       const today = dateKey(), current = journalRef.current, existing = current.daily.find(item => item.date === today);
@@ -166,7 +166,7 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
         next = { ...next, daily: next.daily.filter(item => weekStart(item.date) !== start), weekly: [...next.weekly.filter(item => item.startDate !== start), archive].sort((a, b) => b.startDate.localeCompare(a.startDate)).slice(0, 52) };
       }
       saveJournal({ ...next, todaySeconds: journalRef.current.todaySeconds, totalSeconds: journalRef.current.totalSeconds }); return report;
-    } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '无法生成今日总结'); return undefined; }
+    } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not prepare your recap.'); return undefined; }
     finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
   }, [saveJournal]);
   const clearSession = useCallback(() => { abort.current?.abort(); void recorder.current?.stop(false); setRecordingState(false); updateHistory([]); setPractice(undefined); setTip(''); setError(''); saveSession([], memoryRef.current); }, []);
@@ -179,7 +179,7 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
       applyUsage(result.usage);
       const assessment: CoachLevelAssessment = { id: `assessment-${Date.now()}`, createdAt: new Date().toISOString(), score: Math.max(1, Math.min(9, Math.round(result.data.score))), grammar: result.data.grammar, vocabulary: result.data.vocabulary, fluency: result.data.fluency, conclusion: result.data.conclusion };
       saveJournal({ ...journalRef.current, assessment }); return assessment;
-    } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '暂时无法完成水平评估'); return undefined; }
+    } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not complete your assessment.'); return undefined; }
     finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
   }, [saveJournal]);
   return {

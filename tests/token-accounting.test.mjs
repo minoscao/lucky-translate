@@ -8,6 +8,8 @@ const read = file => readFile(new URL(file, import.meta.url), 'utf8');
 const source = (await read('../lib/server/account.ts')).replace(/^import .*;\r?\n/gm, '');
 const moduleSource = `const getDb=()=>globalThis.__tokenDb, getRetentionRules=async()=>({}), retentionMonths=()=>1;\n${source}`;
 const { recordDeepSeekUsage, enforceLimits, periodKeys } = await import('data:text/javascript;base64,' + Buffer.from(ts.transpile(moduleSource, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext })).toString('base64'));
+const dashboardSource = (await read('../lib/server/usage-dashboard.ts')).replace(/^import .*;\r?\n/gm, '');
+const { usageDashboard } = await import('data:text/javascript;base64,' + Buffer.from(ts.transpile(`const getDb=()=>globalThis.__tokenDb; const periodKeys=()=>globalThis.__dashboardPeriod; ${dashboardSource}`, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext })).toString('base64'));
 const schema = await read('../drizzle/0000_noisy_anthem.sql') + await read('../drizzle/0003_monthly_token_limit.sql');
 const planSource = await read('../lib/membership-plans.ts');
 const pointSource = (await read('../lib/points.ts')).replace(/^import .*;\r?\n/gm, '');
@@ -61,6 +63,35 @@ test('customer quota records actual provider tokens once and preserves failed-ou
     assert.equal(db.sqlite.prepare('SELECT tokens FROM usage_daily').get().tokens, 1016);
     assert.equal(db.sqlite.prepare('SELECT SUM(total_tokens) total FROM usage_events').get().total, 1016);
   } finally { db.close(); }
+});
+
+test('dashboard totals use complete isolated history and real tokens including failed attempts', async () => {
+  const db = setup();
+  globalThis.__dashboardPeriod = { day: '2026-09-11', month: '2026-09' };
+  try {
+    db.sqlite.exec("INSERT INTO users(id,username,password_hash,created_at,updated_at) VALUES('other','other','disabled',0,0)");
+    const daily = db.sqlite.prepare('INSERT INTO usage_daily(user_id,day,tokens,active_seconds,training_seconds,translation_seconds,updated_at) VALUES(?,?,999999,?,?,?,0)');
+    daily.run('test', '2026-09-11', 660, 360, 240);
+    daily.run('test', '2026-09-01', 120, 60, 60);
+    daily.run('test', '2026-08-31', 60, 60, 0);
+    daily.run('other', '2026-09-11', 9999, 9999, 0);
+    const event = db.sqlite.prepare("INSERT INTO usage_events(id,user_id,feature,provider,model,input_tokens,cached_tokens,output_tokens,total_tokens,cost_micros,price_snapshot,created_at) VALUES(?,?,'coach','deepseek','model',?,?,?,0,1,?,?)");
+    // 205 rows ensure totals do not depend on the recent 100/200-row UI lists.
+    for (let i = 0; i < 205; i++) event.run(String(i), 'test', 10, 4, 2, JSON.stringify({ actualTokens: 12, billable: false }), Date.parse('2026-09-11T00:00:00+08:00'));
+    event.run('month', 'test', 20, 0, 5, '{}', Date.parse('2026-09-10T23:59:59+08:00'));
+    event.run('older', 'test', 30, 0, 5, '{}', Date.parse('2026-08-31T23:59:59+08:00'));
+    event.run('other', 'other', 9000, 0, 999, '{}', Date.parse('2026-09-11T00:00:00+08:00'));
+    event.run('missing', 'test', 0, 0, 0, JSON.stringify({ usageReported: false }), Date.parse('2026-09-11T00:00:00+08:00'));
+    const { periods } = await usageDashboard('test');
+    assert.deepEqual(periods.today, { conversationSeconds: 360, translationSeconds: 240, recapSeconds: 60, totalSeconds: 660, actualTokens: 2460, inputTokens: 2050, cachedTokens: 820, outputTokens: 410, unreportedRequests: 1 });
+    assert.equal(periods.month.actualTokens, 2485);
+    assert.equal(periods.total.actualTokens, 2520);
+    assert.equal(periods.month.totalSeconds, 780);
+    assert.equal(periods.total.totalSeconds, 840);
+    assert.equal((await usageDashboard('empty')).periods.total.actualTokens, 0);
+    event.run('new', 'test', 5, 2, 3, JSON.stringify({ actualTokens: 8, usageReported: true }), Date.parse('2026-09-11T01:00:00+08:00'));
+    assert.equal((await usageDashboard('test')).periods.total.actualTokens, 2528);
+  } finally { db.close(); delete globalThis.__dashboardPeriod; }
 });
 
 test('lv3 uses the calendar month total across days and ignores previous months', async () => {

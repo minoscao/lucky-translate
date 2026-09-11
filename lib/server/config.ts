@@ -1,5 +1,6 @@
 import { getDb } from '@/db';
 import { COACH_RESPONSE_CONTRACT, DEFAULT_COACH_SKILL } from '@/lib/coach';
+import { COACH_LANGUAGE_POLICY } from '@/lib/coach-language';
 
 const encoder = new TextEncoder(), decoder = new TextDecoder();
 const password = () => { const value = process.env.SERVICE_ENCRYPTION_SECRET; if (!value) throw new Error('服务保密配置尚未完成'); return value; };
@@ -34,8 +35,9 @@ export async function deepSeekConfigured() {
 
 export async function getCoachSkill() {
   const row = await getDb().prepare("SELECT value FROM app_config WHERE key = 'coach_skill'").first<{ value: string }>();
-  const skill = row?.value?.trim().replace(/^You are Luna,/, 'You are Lucky,') || DEFAULT_COACH_SKILL;
-  return skill.includes(COACH_RESPONSE_CONTRACT) ? skill : `${skill}\n\n${COACH_RESPONSE_CONTRACT}`;
+  const skill = (row?.value?.trim().replace(/^You are Luna,/, 'You are Lucky,') || DEFAULT_COACH_SKILL).split(COACH_LANGUAGE_POLICY).join('').trim();
+  const contracted = skill.includes(COACH_RESPONSE_CONTRACT) ? skill : `${skill}\n\n${COACH_RESPONSE_CONTRACT}`;
+  return `${contracted}\n\n${COACH_LANGUAGE_POLICY}`;
 }
 
 export async function setCoachSkill(value: string) {

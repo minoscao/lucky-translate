@@ -38,11 +38,11 @@ export function RecordButton({ recording, busy = false, disabled = false, onStar
     else { press.current = undefined; setGesture('idle'); }
   };
   const cancelPointer = (event: PointerEvent<HTMLButtonElement>) => { if (press.current?.id === event.pointerId) stop(false); };
-  const feedback = gesture === 'cancel' ? '松开取消发送' : gesture === 'holding' ? '松开发送 · 上滑取消' : '正在录音 · 点击发送';
+  const feedback = gesture === 'cancel' ? 'Release to cancel' : gesture === 'holding' ? 'Release to send · Slide up to cancel' : 'Recording · Tap to send';
   return <div className="record-control" data-cancel={gesture === 'cancel'}>
-    {(gesture !== 'idle' || recording) && <div className="record-feedback"><output aria-live="polite">{gesture === 'cancel' ? <X /> : <ArrowUp />}{feedback}</output><Button type="button" variant="ghost" className="record-cancel" onClick={() => stop(false)} aria-label="取消录音"><X /></Button></div>}
-    <Button type="button" className="coach-mic" data-active={recording || gesture !== 'idle'} data-cancel={gesture === 'cancel'} disabled={busy || disabled} aria-label={recording ? '点击发送，或取消录音' : '按住说话，上滑取消；也可点击开始录音'} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={cancelPointer} onLostPointerCapture={cancelPointer} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); stop(false); } }} onClick={event => { if (event.detail !== 0) return; if (recording) stop(true); else void onStart(); }} onContextMenu={event => event.preventDefault()}>
-      {busy ? <LoaderCircle className="spinning" /> : gesture === 'cancel' ? <X /> : recording ? <Square fill="currentColor" /> : <Mic />}<span>{gesture === 'cancel' ? '松开取消' : recording ? '正在聆听…' : '按住说话'}</span>
+    {(gesture !== 'idle' || recording) && <div className="record-feedback"><output aria-live="polite">{gesture === 'cancel' ? <X /> : <ArrowUp />}{feedback}</output><Button type="button" variant="ghost" className="record-cancel" onClick={() => stop(false)} aria-label="Cancel recording"><X /></Button></div>}
+    <Button type="button" className="coach-mic" data-active={recording || gesture !== 'idle'} data-cancel={gesture === 'cancel'} disabled={busy || disabled} aria-label={recording ? 'Tap to send, or cancel recording' : 'Hold to speak and slide up to cancel, or tap to start recording'} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={cancelPointer} onLostPointerCapture={cancelPointer} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); stop(false); } }} onClick={event => { if (event.detail !== 0) return; if (recording) stop(true); else void onStart(); }} onContextMenu={event => event.preventDefault()}>
+      {busy ? <LoaderCircle className="spinning" /> : gesture === 'cancel' ? <X /> : recording ? <Square fill="currentColor" /> : <Mic />}<span>{gesture === 'cancel' ? 'Release to cancel' : recording ? 'Listening…' : 'Hold to speak'}</span>
     </Button>
   </div>;
 }

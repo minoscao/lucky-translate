@@ -52,18 +52,18 @@ async function coachRequest<T>(_key: string, messages: Array<{ role: 'system' | 
       method: 'POST', credentials: 'same-origin', signal, headers: { 'Content-Type': 'application/json', 'X-Lucky-Account': _key },
       body: JSON.stringify({ messages: messages.map((message, index) => index === 0 ? { ...message, content: `${message.content}\n\nRequired JSON response schema: ${JSON.stringify(_schema)}` } : message), maxTokens: 1800 }),
     });
-  } catch { throw new Error('无法连接 English Coach，请检查网络'); }
+  } catch { throw new Error('Could not connect to English Coach. Please check your connection.'); }
   if (!response.ok) {
     const detail = await response.json().catch(() => null) as { error?: string } | null;
-    throw new Error(detail?.error || 'English Coach 暂时无法回应');
+    throw new Error(detail?.error || 'English Coach is unavailable. Please try again.');
   }
   const result = await response.json() as { content?: string; usage?: CoachUsage };
   const content = result.content;
-  if (!content) throw new Error('English Coach 没有返回完整内容');
+  if (!content) throw new Error('English Coach could not finish the reply.');
   const clean = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   const start = clean.indexOf('{'), end = clean.lastIndexOf('}');
   try { return { data: JSON.parse(start >= 0 && end >= start ? clean.slice(start, end + 1) : clean) as T, usage: result.usage || { tokens: 0, cost: 0 } }; }
-  catch { throw new Error('English Coach 返回内容不完整，请重试'); }
+  catch { throw new Error('The reply was incomplete. Please try again.'); }
 }
 
 export async function coachReplyDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; turnStatus: string; newSession?: boolean; signal: AbortSignal }) {

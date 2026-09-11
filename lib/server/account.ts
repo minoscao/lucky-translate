@@ -43,10 +43,11 @@ export async function recordDeepSeekUsage(account: Account, feature: string, usa
   const input = Math.max(0, usage?.prompt_tokens || 0), output = Math.max(0, usage?.completion_tokens || 0), cached = Math.min(input, Math.max(0, usage?.prompt_cache_hit_tokens || 0));
   const rates = peak ? { period: 'peak', cached: .014, input: .44, output: 1.32 } : { period: 'off_peak', cached: .007, input: .22, output: .66 };
   const tokens = usage?.total_tokens || input + output, chargedTokens = billable ? tokens : 0, cost = ((input - cached) * rates.input + cached * rates.cached + output * rates.output) / 1_000_000;
+  const usageReported = typeof usage?.total_tokens === 'number' || (typeof usage?.prompt_tokens === 'number' && typeof usage?.completion_tokens === 'number');
   const costMicros = Math.max(0, Math.round(cost * 1_000_000)), now = Date.now(), eventId = crypto.randomUUID();
   await getDb().batch([
     getDb().prepare(`INSERT INTO usage_events (id, user_id, feature, provider, model, input_tokens, cached_tokens, output_tokens, total_tokens, cost_micros, price_snapshot, created_at)
-      VALUES (?1, ?2, ?3, 'deepseek', 'deepseek-v4-flash', ?4, ?5, ?6, ?7, ?8, ?9, ?10)`).bind(eventId, account.id, feature, input, cached, output, chargedTokens, costMicros, JSON.stringify({ ...rates, actualTokens: tokens, billable }), now),
+      VALUES (?1, ?2, ?3, 'deepseek', 'deepseek-v4-flash', ?4, ?5, ?6, ?7, ?8, ?9, ?10)`).bind(eventId, account.id, feature, input, cached, output, chargedTokens, costMicros, JSON.stringify({ ...rates, actualTokens: tokens, usageReported, billable }), now),
     getDb().prepare(`INSERT INTO usage_daily (user_id, day, tokens, cost_micros, active_seconds, training_seconds, translation_seconds, updated_at) VALUES (?1, ?2, ?3, ?4, 0, 0, 0, ?5)
       ON CONFLICT(user_id, day) DO UPDATE SET tokens = tokens + excluded.tokens, cost_micros = cost_micros + excluded.cost_micros, updated_at = excluded.updated_at`).bind(account.id, day, chargedTokens, costMicros, now),
   ]);

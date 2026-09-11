@@ -15,7 +15,8 @@ async function dashboard(request?: Request, businessUnlocked?: boolean) {
   const rows = await getDb().prepare('SELECT * FROM users ORDER BY CASE status WHEN \'pending\' THEN 0 ELSE 1 END, created_at DESC').all<Account>();
   const users = await Promise.all(rows.results.map(async account => ({ ...await accountSnapshot(account), timeLedger: await timeLedger(account.id), adminNote: account.admin_note, createdAt: account.created_at, lastLoginAt: account.last_login_at })));
   const prices = await getDb().prepare('SELECT provider, model, period, cache_hit_micros_per_million, input_micros_per_million, output_micros_per_million, effective_at FROM price_history WHERE retired_at IS NULL ORDER BY effective_at DESC, period').all();
-  const history = await getDb().prepare(`SELECT e.id, e.feature, e.model, e.input_tokens, e.cached_tokens, e.output_tokens, e.total_tokens, e.cost_micros, e.price_snapshot, e.created_at, u.username
+  const history = await getDb().prepare(`SELECT e.id, e.feature, e.model, e.input_tokens, e.cached_tokens, e.output_tokens,
+    COALESCE(json_extract(e.price_snapshot,'$.actualTokens'), e.input_tokens+e.output_tokens) total_tokens, e.cost_micros, e.price_snapshot, e.created_at, u.username
     FROM usage_events e JOIN users u ON u.id = e.user_id WHERE e.provider != 'membership' ORDER BY e.created_at DESC LIMIT 200`).all();
   const payments = await getDb().prepare(`SELECT p.id, p.user_id, p.amount_cents, p.currency, p.status, p.note, p.paid_at, p.created_at, u.username
     FROM payments p JOIN users u ON u.id = p.user_id ORDER BY p.paid_at DESC`).all();

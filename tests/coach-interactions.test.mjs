@@ -29,7 +29,7 @@ test('hold-to-talk supports sliding up to cancel, sliding back to send, and poin
   try {
     await act(async () => { renderer = create(React.createElement(RecordButton, props)); });
     await act(async () => button().props.onPointerDown(event()));
-    assert.match(JSON.stringify(renderer.toJSON()), /松开发送 · 上滑取消/);
+    assert.match(JSON.stringify(renderer.toJSON()), /Release to send · Slide up to cancel/);
     await act(async () => button().props.onPointerMove(event(100)));
     assert.equal(button().props['data-cancel'], true);
     now = 500;
@@ -85,8 +85,8 @@ test('ending a session pauses immediately without generating a recap or changing
     await act(async () => { renderer = create(React.createElement(CoachMode, { coach, speaking: false, onStopSpeech() { speechStops++; } })); });
     await act(async () => renderer.root.findByProps({ className: 'coach-end' }).props.onClick());
     assert.equal(summaries, 0); assert.equal(cancellations, 1); assert.equal(speechStops, 1);
-    assert.equal(renderer.root.findByType('h1').children.join(''), '先聊到这里');
-    const resume = renderer.root.findAllByType('button').find(node => node.children.join('') === '继续聊天');
+    assert.equal(renderer.root.findByType('h1').children.join(''), 'That’s enough for now');
+    const resume = renderer.root.findAllByType('button').find(node => node.children.join('') === 'Continue chatting');
     await act(async () => resume.props.onClick());
     assert.equal(renderer.root.findAllByProps({ className: 'coach-message learner' }).length, 1);
     assert.equal(summaries, 0); assert.equal(coach.history, history);
