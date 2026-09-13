@@ -37,6 +37,7 @@ test('inline conversation retains older turns and follows its language when side
   assert.deepEqual(transcriptForLanguage(history, 'ja'), []);
 });
 const processorSource = await readFile(new URL('../public/voice-processor.js', import.meta.url), 'utf8');
+const { COACH_RECORDING, MAX_COACH_AUDIO_BYTES } = await import('../lib/recording-limits.ts');
 function processor(rate = 48000) {
   let Processor; const messages = [];
   class Worklet { constructor() { this.port = { postMessage: data => messages.push(data) }; } }
@@ -53,6 +54,23 @@ test('silence sends no audio; stopping sends the final sentence with valid WAV h
   const wav = new DataView(speech.wav); assert.equal(wav.getUint32(24, true), 16000); assert.equal(wav.getUint32(40, true), speech.wav.byteLength - 44);
   assert.ok(capture.messages.some(m => m.type === 'flushed'));
   capture.feed(1, .2); assert.equal(capture.messages.filter(m => m.type === 'sentence').length, 1);
+});
+
+test('Coach captures beyond 30 seconds and stops exactly at its shared limit at 44.1 and 48 kHz', () => {
+  for (const rate of [44100, 48000]) {
+    const capture = processor(rate);
+    capture.p.port.onmessage({ data: { type: 'config', mode: 'hold', maxSeconds: COACH_RECORDING.maxSeconds } });
+    capture.feed(35, .1);
+    assert.equal(capture.messages.filter(item => item.type === 'limit').length, 0);
+    capture.feed(90, .1);
+    assert.equal(capture.messages.filter(item => item.type === 'limit').length, 1);
+    assert.equal(capture.messages.filter(item => item.type === 'progress').at(-1).seconds, 120);
+    capture.p.port.onmessage({ data: { type: 'flush' } });
+    const wav = capture.messages.find(item => item.type === 'sentence').wav;
+    assert.equal(wav.byteLength, MAX_COACH_AUDIO_BYTES);
+    capture.feed(5, .1); capture.p.port.onmessage({ data: { type: 'flush' } });
+    assert.equal(capture.messages.filter(item => item.type === 'sentence').length, 1);
+  }
 });
 test('hold mode keeps one sentence until release; continuous mode waits for five seconds of silence', () => {
   for (const rate of [44100, 48000]) {

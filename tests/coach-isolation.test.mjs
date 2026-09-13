@@ -10,6 +10,7 @@ const url = source => 'data:text/javascript;base64,'+Buffer.from(source).toStrin
 const strip = source => source.replace(/^import[\s\S]*?from ['"][^'"]+['"];\s*/gm,'');
 const scopeModule=await import(url(strip(compile(await read('../lib/account-scope.ts')))));
 const coach=await import(url(`import {useEffect,useRef,useState,useCallback} from '${import.meta.resolve('react')}';
+import {COACH_RECORDING} from '${new URL('../lib/recording-limits.ts', import.meta.url).href}';
 const EMPTY_COACH_MEMORY={level:'discovering',topics:[],strengths:[],focus:[],phrases:[]};
 class VoiceRecorder {async stop(){} async start(){return true;}}
 const coachReplyDirect=input=>globalThis.__coachReply(input);

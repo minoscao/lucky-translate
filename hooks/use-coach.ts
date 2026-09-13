@@ -10,6 +10,7 @@ import { transcribeDirect } from '@/lib/direct-api';
 import { VoiceRecorder } from '@/lib/voice-recorder';
 import { AccountSnapshot } from '@/lib/account';
 import { AccountScope } from '@/lib/account-scope';
+import { COACH_RECORDING } from '@/lib/recording-limits';
 
 type UsageHandler = (tokens: number, cost: number) => void;
 type CoachJournal = { todayDate: string; todaySeconds: number; totalSeconds?: number; daily: CoachDailySummary[]; weekly: CoachWeeklySummary[]; assessment?: CoachLevelAssessment };
@@ -38,6 +39,8 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
   const [busy, setBusy] = useState(false), [recording, setRecording] = useState(false), [error, setError] = useState(''), [tip, setTip] = useState('');
   const [practice, setPractice] = useState<{ title: string; exercises: CoachExercise[] }>(), [speechRequest, setSpeechRequest] = useState<{ id: number; text: string }>();
   const [journal, setJournal] = useState<CoachJournal>(emptyJournal);
+  const [recordingSeconds, setRecordingSeconds] = useState(0), [recordingNotice, setRecordingNotice] = useState('');
+  const cancelAtLimit = useRef(false);
   const recorder = useRef<VoiceRecorder | undefined>(undefined), abort = useRef<AbortController | undefined>(undefined), keyRef = useRef(scope.owner), usageRef = useRef(addUsage), ieltsScoreRef = useRef(ieltsScore);
   const historyRef = useRef<CoachMessage[]>([]), memoryRef = useRef<CoachMemory>(EMPTY_COACH_MEMORY), busyRef = useRef(false), recordingRef = useRef(false), journalRef = useRef<CoachJournal>(emptyJournal());
   const cloudReady = useRef(false);
@@ -104,7 +107,8 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
   }, []);
 
   const submitLearner = useCallback(async (raw: string, fromRecorder = false) => {
-    const text = raw.trim().slice(0, 2000); if (!cloudReady.current || !scope.active || !text || busyRef.current || (!fromRecorder && recordingRef.current)) return false;
+    const text = raw.trim(); if (!cloudReady.current || !scope.active || !text || busyRef.current || (!fromRecorder && recordingRef.current)) return false;
+    if (text.length > COACH_RECORDING.maxTextCharacters) { setError('This message is too long. Please send it in smaller parts.'); return false; }
     const words = text.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g)?.length || 0;
     const greeting = /^(hi|hello|hey|thanks|thank you|okay|ok|yes|no)[!. ]*$/i.test(text);
     const turnStatus = greeting ? 'brief social reply: respond naturally' : words >= 4 ? 'the learner is expressing a complete idea: follow it and invite depth' : 'short reply: follow its meaning and invite one easy detail; do not infer a lower level or force a scaffold';
@@ -125,7 +129,15 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
           return submitLearner(result.text, true);
         }).catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not recognize your speech. Please try again.'); })
           .finally(() => { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } });
-      }, onLevel: () => {}, onError: message => { setError(message); setRecordingState(false); },
+      }, onLevel: () => {}, onError: message => { setError(message); setRecordingState(false); void current.stop(false); },
+      onProgress: seconds => { if (scope.active && recordingRef.current) setRecordingSeconds(seconds); },
+      onLimit: () => {
+        if (!scope.active || !recordingRef.current) return;
+        recordingAttempt.current++; setRecordingState(false);
+        const commit = !cancelAtLimit.current;
+        setRecordingNotice(commit ? `Recording stopped at the ${COACH_RECORDING.maxSeconds}-second limit.` : 'Recording cancelled.');
+        void current.stop(commit);
+      },
     });
     recorder.current = current;
     return () => { abort.current?.abort(); void current.stop(false); };
@@ -134,8 +146,8 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
   const beginSession = useCallback(async () => { abort.current?.abort(); setPractice(undefined); updateHistory([]); setTip(''); return requestReply([], memoryRef.current, 'new session', true); }, [requestReply]);
   const startRecording = useCallback(async () => {
     if (!cloudReady.current || !scope.active || busyRef.current || recordingRef.current) return false;
-    const attempt = ++recordingAttempt.current; setRecordingState(true);
-    setError(''); const started = await recorder.current?.start('hold', false).catch(cause => { if (attempt === recordingAttempt.current && scope.active) setError(cause instanceof Error ? cause.message : 'Could not start the microphone.'); return false; });
+    const attempt = ++recordingAttempt.current; setRecordingState(true); setRecordingSeconds(0); setRecordingNotice(''); cancelAtLimit.current = false;
+    setError(''); const started = await recorder.current?.start('hold', false, '', COACH_RECORDING.maxSeconds).catch(cause => { if (attempt === recordingAttempt.current && scope.active) setError(cause instanceof Error ? cause.message : 'Could not start the microphone.'); return false; });
     if (attempt !== recordingAttempt.current || !scope.active) return false;
     setRecordingState(Boolean(started)); return Boolean(started);
   }, []);
@@ -184,7 +196,8 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
   }, [saveJournal]);
   return {
     ready, cancel: () => { abort.current?.abort(); void stopRecording(false); },
-    history, memory, busy, recording, error, tip, practice, speechRequest,
+    history, memory, busy, recording, recordingSeconds, recordingNotice, recordingLimit: COACH_RECORDING.maxSeconds, recordingWarning: COACH_RECORDING.warningSeconds,
+    setRecordingCancelled: (value: boolean) => { cancelAtLimit.current = value; }, error, tip, practice, speechRequest,
     todaySeconds: journal.todayDate === dateKey() ? journal.todaySeconds : 0, totalPracticeSeconds: totalPracticeSeconds(journal), latestAssessment: journal.assessment, eligibleForAssessment: totalPracticeSeconds(journal) >= 7200,
     dailySummaries: journal.daily, weeklySummaries: journal.weekly,
     beginSession, sendText: submitLearner, startRecording, stopRecording, createPractice, summarizeToday, clearSession, evaluateLevel, setPractice, setError,

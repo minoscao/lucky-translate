@@ -1,6 +1,6 @@
 import type { RecordMode } from './translation';
 
-type Callbacks = { onSentence: (blob: Blob, boundary?: 'speaker-before' | 'speaker-after') => void; onLevel: (level: number) => void; onError: (message: string) => void };
+type Callbacks = { onSentence: (blob: Blob, boundary?: 'speaker-before' | 'speaker-after') => void; onLevel: (level: number) => void; onError: (message: string) => void; onProgress?: (seconds: number) => void; onLimit?: () => void };
 export class VoiceRecorder {
   private context?: AudioContext;
   private stream?: MediaStream;
@@ -14,7 +14,7 @@ export class VoiceRecorder {
     if (!this.context || this.context.state === 'closed') this.context = new AudioContext();
     void this.context.resume().catch(() => {});
   }
-  async start(mode: Exclude<RecordMode, 'idle'> = 'hold', detectSpeaker = true, deviceId = '') {
+  async start(mode: Exclude<RecordMode, 'idle'> = 'hold', detectSpeaker = true, deviceId = '', maxSeconds = 0) {
     const token = ++this.generation;
     await this.stopping;
     if (token !== this.generation) return false;
@@ -28,11 +28,13 @@ export class VoiceRecorder {
       await context.audioWorklet.addModule('/voice-processor.js');
       if (token !== this.generation) { stream.getTracks().forEach(track => track.stop()); return false; }
       const node = new AudioWorkletNode(context, 'lucky-voice'); this.node = node;
-      node.port.postMessage({ type: 'config', mode, detectSpeaker });
+      node.port.postMessage({ type: 'config', mode, detectSpeaker, maxSeconds });
       node.port.onmessage = ({ data }) => {
         if (data.type === 'flushed') { this.finish?.(); return; }
         if (token !== this.generation) return;
         if (data.type === 'level') this.callbacks.onLevel(data.level);
+        if (data.type === 'progress') this.callbacks.onProgress?.(data.seconds);
+        if (data.type === 'limit') this.callbacks.onLimit?.();
         if (data.type === 'sentence') this.callbacks.onSentence(new Blob([data.wav], { type: 'audio/wav' }), data.boundary);
       };
       node.onprocessorerror = () => { if (token === this.generation) this.callbacks.onError('录音中断，请重试'); };

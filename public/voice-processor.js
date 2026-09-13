@@ -8,8 +8,9 @@ class LuckyVoice extends AudioWorkletProcessor {
     this.autoSilenceSeconds = Infinity; this.detectSpeaker = false; this.freshSegment = true;
     this.phase = 0; this.resampleSum = 0; this.resampleCount = 0;
     this.pitchFrames = 0; this.speakerPitch = 0; this.changeCandidate = 0;
+    this.elapsedFrames = 0; this.maxFrames = Infinity; this.progressSecond = -1;
     this.port.onmessage = ({ data }) => {
-      if (data.type === 'config') { this.autoSilenceSeconds = data.mode === 'continuous' ? 5 : Infinity; this.detectSpeaker = data.mode === 'continuous' && data.detectSpeaker !== false; }
+      if (data.type === 'config') { this.autoSilenceSeconds = data.mode === 'continuous' ? 5 : Infinity; this.detectSpeaker = data.mode === 'continuous' && data.detectSpeaker !== false; this.maxFrames = data.maxSeconds > 0 ? Math.floor(data.maxSeconds * sampleRate) : Infinity; }
       if (data.type === 'flush') { this.emit('stop'); this.active = false; this.port.postMessage({ type: 'flushed' }); }
     };
   }
@@ -79,7 +80,12 @@ class LuckyVoice extends AudioWorkletProcessor {
     this.freshSegment = reason === 'silence'; this.pitchFrames = 0;
   }
   process(inputs) {
-    const input = inputs[0]?.[0]; if (!this.active || !input?.length) return true;
+    let input = inputs[0]?.[0]; if (!this.active || !input?.length) return true;
+    input = input.subarray(0, Math.min(input.length, this.maxFrames - this.elapsedFrames));
+    this.elapsedFrames += input.length;
+    const seconds = Math.floor(this.elapsedFrames / sampleRate);
+    if (seconds !== this.progressSecond) { this.progressSecond = seconds; this.port.postMessage({ type: 'progress', seconds }); }
+    if (this.elapsedFrames >= this.maxFrames) { this.active = false; this.port.postMessage({ type: 'limit' }); }
     let sum = 0; for (const value of input) sum += value * value;
     const rms = Math.sqrt(sum / input.length), voice = rms >= .008, chunk = this.downsample(input);
     this.tick += input.length;

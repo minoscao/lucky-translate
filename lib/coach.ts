@@ -134,7 +134,8 @@ export async function coachReplyDirect(input: { key: string; history: CoachMessa
     type: 'object', additionalProperties: false, required: ['reply', 'tip', 'memory'],
     properties: { reply: { type: 'string' }, tip: { type: 'string' }, memory: memorySchema },
   };
-  const history = input.history.slice(-12).map(message => ({ role: message.role === 'coach' ? 'assistant' as const : 'user' as const, content: message.role === 'coach' ? JSON.stringify({ reply: message.text.slice(0, 1000) }) : message.text.slice(0, 1000) }));
+  const recent = input.history.slice(-12);
+  const history = recent.map((message, index) => ({ role: message.role === 'coach' ? 'assistant' as const : 'user' as const, content: message.role === 'coach' ? JSON.stringify({ reply: message.text.slice(0, 1000) }) : index === recent.length - 1 ? message.text : message.text.slice(0, 1000) }));
   const task = input.newSession
     ? `Start a fresh ordinary open conversation. Do not announce a level or lesson. Learner memory: ${JSON.stringify(input.memory)}`
     : `Private learner memory: ${JSON.stringify(input.memory)}\nLearner-turn signal: ${input.turnStatus}. Respond to the learner's latest message.`;

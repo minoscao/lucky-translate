@@ -10,6 +10,7 @@ const strip = source => source.replace(/^import[\s\S]*?from ['"][^'"]+['"];\s*/g
 const compile = source => ts.transpile(source, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.React });
 const url = source => 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
 const imports = `import React,{useRef,useState,useEffect,useCallback} from '${import.meta.resolve('react')}';
+import {COACH_RECORDING} from '${new URL('../lib/recording-limits.ts', import.meta.url).href}';
 import {ArrowUp,ArrowLeft,BookOpenText,Check,Download,GraduationCap,KeyRound,LoaderCircle,MessageCircleHeart,Mic,RotateCcw,Send,Settings2,Sparkles,Square,Target,UserRound,Volume2,WandSparkles,X} from '${import.meta.resolve('lucide-react')}';
 const Button=props=>React.createElement('button',props),Input=props=>React.createElement('input',props);`;
 const recordUrl = url(imports + strip(compile(await read('../components/record-button.tsx'))));
@@ -18,6 +19,48 @@ const textUrl = url(compile(await read('../lib/text-highlights.ts')));
 const highlightUrl = url(imports + `import {textHighlights} from '${textUrl}';` + strip(compile(await read('../components/highlighted-text.tsx'))));
 const { CoachMode } = await import(url(imports + `import {RecordButton} from '${recordUrl}';import {HighlightedText} from '${highlightUrl}';import {grammarHighlights} from '${textUrl}';const CoachPet=()=>null;` + strip(compile(await read('../components/coach-mode.tsx')))));
 const event = (y = 200, id = 1) => ({ pointerId: id, clientY: y, button: 0, isPrimary: true, preventDefault() {}, currentTarget: { setPointerCapture() {} } });
+
+test('recording displays elapsed time and turns red for each of the final ten seconds', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  let renderer;
+  const props = { recording: true, onStart: async () => true, onStop: async () => {}, limitSeconds: 120, warningSeconds: 10 };
+  try {
+    await act(async () => { renderer = create(React.createElement(RecordButton, { ...props, elapsedSeconds: 109 })); });
+    assert.equal(renderer.root.findByProps({ className: 'record-control' }).props['data-warning'], false);
+    for (let seconds = 110; seconds <= 119; seconds++) {
+      await act(async () => renderer.update(React.createElement(RecordButton, { ...props, elapsedSeconds: seconds })));
+      assert.equal(renderer.root.findByProps({ className: 'record-control' }).props['data-warning'], true);
+      assert.match(JSON.stringify(renderer.toJSON()), new RegExp(`${120 - seconds}s left`));
+    }
+    await act(async () => renderer.update(React.createElement(RecordButton, { ...props, recording: false })));
+    assert.equal(renderer.root.findByProps({ className: 'record-control' }).props['data-warning'], false);
+    assert.equal(renderer.root.findByProps({ className: 'record-timer' }).findByType('span').children.join(''), 'Up to 2:00 per voice message');
+  } finally { if (renderer) await act(async () => renderer.unmount()); }
+});
+
+test('automatic limit sends once, while a slide-to-cancel at the limit discards the recording', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const { useCoach } = await import(url(imports + `
+const EMPTY_COACH_MEMORY={level:'discovering',topics:[],strengths:[],focus:[],phrases:[]};
+class VoiceRecorder {constructor(callbacks){globalThis.__limitCallbacks=callbacks;} async start(...args){globalThis.__limitStart=args;return true;}async stop(commit){globalThis.__limitStops.push(commit);}}
+` + strip(compile(await read('../hooks/use-coach.ts')))));
+  const scope = { owner: 'test', active: true, storage: { getItem: () => null, setItem() {} }, save: async () => {}, request: async () => ({ records: [], account: { usage: { todayTrainingSeconds: 0, totalTrainingSeconds: 0 } } }) };
+  let current, renderer;
+  function Harness() { current = useCoach(scope, () => {}); return null; }
+  globalThis.__limitStops = [];
+  try {
+    await act(async () => { renderer = create(React.createElement(Harness)); });
+    await act(async () => { await current.startRecording(); });
+    assert.equal(globalThis.__limitStart[3], 120);
+    await act(async () => { globalThis.__limitCallbacks.onProgress(119); });
+    assert.equal(current.recordingSeconds, 119);
+    await act(async () => { globalThis.__limitCallbacks.onLimit(); globalThis.__limitCallbacks.onLimit(); });
+    assert.equal(current.recording, false); assert.deepEqual(globalThis.__limitStops, [true]);
+    await act(async () => { await current.startRecording(); current.setRecordingCancelled(true); globalThis.__limitCallbacks.onLimit(); });
+    assert.deepEqual(globalThis.__limitStops, [true, false]);
+    assert.match(current.recordingNotice, /cancelled/);
+  } finally { if (renderer) await act(async () => renderer.unmount()); delete globalThis.__limitCallbacks; delete globalThis.__limitStops; delete globalThis.__limitStart; }
+});
 
 test('hold-to-talk supports sliding up to cancel, sliding back to send, and pointer interruption', async t => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
