@@ -4,6 +4,7 @@ import { createConversationStore, language, Pair, RecordGesture, RecordMode, Spe
 import { VoiceRecorder } from '@/lib/voice-recorder';
 import { translateDirect, TranslationProvider } from '@/lib/direct-api';
 import { AccountScope } from '@/lib/account-scope';
+import type { AudioRoute } from '@/lib/audio-routing';
 
 type Job = { id?: number; audio?: Blob; text?: string; pair: Pair; replaceId?: number; speaker: Speaker; sourceSide?: 0 | 1; autoSpeakSide?: 0 | 1 };
 type PendingTurn = { id: number; sourceSide: 0 | 1; speaker: Speaker; text: string };
@@ -17,7 +18,7 @@ const currentMonth = () => {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 };
 const emptyUsageTotals = (): UsageTotals => ({ day: currentDay(), dayTokens: 0, dayCost: 0, month: currentMonth(), monthTokens: 0, monthCost: 0, totalTokens: 0, totalCost: 0 });
-export function useTranslator(scope: AccountScope) {
+export function useTranslator(scope: AccountScope, audioRoutes?: Record<string, AudioRoute>) {
   const localStorage = scope.storage, fetch = scope.fetch, saveCloudRecord = scope.save;
   const [ready, setReady] = useState(false);
   const hydrated = useRef(false);
@@ -39,8 +40,8 @@ export function useTranslator(scope: AccountScope) {
   const [pendingTurns, setPendingTurns] = useState<PendingTurn[]>([]);
   const [autoSpeech, setAutoSpeech] = useState<{ id: number; text: string; lang: string }>();
   const gesture = useRef(new RecordGesture()), recorder = useRef<VoiceRecorder | undefined>(undefined);
-  const live = useRef({ pair, openaiKey, deepseekKey, translationProvider, selfOnTop });
-  useEffect(() => { live.current = { pair, openaiKey, deepseekKey, translationProvider, selfOnTop }; }, [pair, openaiKey, deepseekKey, translationProvider, selfOnTop]);
+  const live = useRef({ pair, openaiKey, deepseekKey, translationProvider, selfOnTop, audioRoutes });
+  useEffect(() => { live.current = { pair, openaiKey, deepseekKey, translationProvider, selfOnTop, audioRoutes }; }, [pair, openaiKey, deepseekKey, translationProvider, selfOnTop, audioRoutes]);
   const activeCapture = useRef<{ pair: Pair; speaker: Speaker; side: 0 | 1; autoSpeakSide?: 0 | 1 }>({ pair, speaker: 'self', side: 1 });
   const speechSequence = useRef(0);
   const jobSequence = useRef(0);
@@ -143,7 +144,8 @@ export function useTranslator(scope: AccountScope) {
     const attempt = ++recordingRequest.current;
     window.speechSynthesis?.cancel();
     try {
-      const started = await recorder.current!.start(gesture.current.mode === 'continuous' ? 'continuous' : 'hold', detectSpeaker);
+      const inputDeviceId = live.current.audioRoutes?.[live.current.pair[side]]?.inputDeviceId || '';
+      const started = await recorder.current!.start(gesture.current.mode === 'continuous' ? 'continuous' : 'hold', live.current.audioRoutes ? false : detectSpeaker, inputDeviceId);
       if (attempt !== recordingRequest.current || !active.current || gesture.current.mode === 'idle') return;
       if (!started) { gesture.current.cancel(); sync(); setPhase('ready'); return; }
       setPhase('listening'); navigator.vibrate?.(20);
@@ -153,7 +155,7 @@ export function useTranslator(scope: AccountScope) {
       const stillWanted = active.current; await stop(false);
       if (!stillWanted) return;
       const e = cause as DOMException;
-      setError(e.name === 'NotAllowedError' ? '请允许使用麦克风，再重新长按或双击' : e.name === 'NotFoundError' ? '没有找到麦克风，可先输入文字翻译' : e.name === 'NotReadableError' ? '麦克风被占用，请关闭其他录音应用后重试' : e.message || '无法开启麦克风，请重试');
+      setError(e.name === 'OverconstrainedError' || e.name === 'NotFoundError' ? 'The selected microphone is unavailable. Open Audio channels and choose a connected microphone.' : e.name === 'NotAllowedError' ? 'Please allow microphone access, then try again.' : e.name === 'NotReadableError' ? 'The microphone is busy. Close other recording apps and try again.' : e.message || 'Could not start the microphone. Please try again.');
     }
   };
   const dispatch = (action: 'start' | 'stop' | undefined, side: 0 | 1, autoSpeakSide?: 0 | 1, detectSpeaker = true) => { sync(); if (action === 'start') void start(side, autoSpeakSide, detectSpeaker); if (action === 'stop') void stop(); };

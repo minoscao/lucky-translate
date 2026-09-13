@@ -14,14 +14,14 @@ export class VoiceRecorder {
     if (!this.context || this.context.state === 'closed') this.context = new AudioContext();
     void this.context.resume().catch(() => {});
   }
-  async start(mode: Exclude<RecordMode, 'idle'> = 'hold', detectSpeaker = true) {
+  async start(mode: Exclude<RecordMode, 'idle'> = 'hold', detectSpeaker = true, deviceId = '') {
     const token = ++this.generation;
     await this.stopping;
     if (token !== this.generation) return false;
     if (!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode) throw new Error('此浏览器无法录音，请用新版 Safari 或 Chrome 打开');
     this.prepare();
     const context = this.context!;
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { ...(deviceId ? { deviceId: { exact: deviceId } } : {}), echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
     if (token !== this.generation) { stream.getTracks().forEach(track => track.stop()); return false; }
     this.stream = stream;
     try {

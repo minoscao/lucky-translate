@@ -218,7 +218,9 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
     if (next?.id !== initialAccount?.id) scope.dispose();
     onAccount(next);
   };
-  const t = useTranslator(scope);
+  const [dualAudio, setDualAudio] = useState(false);
+  const [audioRoutes, setAudioRoutes] = useState<Record<string, AudioRoute>>({});
+  const t = useTranslator(scope, dualAudio ? audioRoutes : undefined);
   const [appMode, setAppMode] = useState<AppMode | null>(null);
   const account = initialAccount;
   const [settingsReturnMode, setSettingsReturnMode] = useState<AppMode | null>(null);
@@ -243,8 +245,6 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
   const [currentPassword, setCurrentPassword] = useState(''), [nextPassword, setNextPassword] = useState('');
   const [editingId, setEditingId] = useState<number>();
   const [speechSpeed, setSpeechSpeed] = useState(1);
-  const [dualAudio, setDualAudio] = useState(false);
-  const [audioRoutes, setAudioRoutes] = useState<Record<string, AudioRoute>>({});
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('face-to-face');
   const [soloDirection, setSoloDirection] = useState<SoloDirection>('listening');
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -375,11 +375,12 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
   }, [addUsage, reportError, speechSpeed, stopSpeech, appMode, dualAudio, audioRoutes, scope]);
   useEffect(() => {
     const request = t.autoSpeech;
+    if (visibleDialog === 'audio' || appMode !== 'translator') { if (request) playedSpeech.current = request.id; return; }
     const mayPlay = (t.mode === 'idle' && t.phase === 'ready') || (layoutMode === 'single-operator' && t.mode === 'continuous' && t.phase === 'listening');
     if (!request || request.id === playedSpeech.current || !mayPlay) return;
     playedSpeech.current = request.id;
     void playSpeech(request.text, request.lang);
-  }, [t.autoSpeech, t.mode, t.phase, layoutMode, playSpeech]);
+  }, [t.autoSpeech, t.mode, t.phase, layoutMode, playSpeech, visibleDialog, appMode]);
   useEffect(() => {
     const request = coach.speechRequest;
     if (appMode !== 'coach' || !request || request.id === playedCoachSpeech.current) return;
@@ -518,7 +519,7 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
         </button>)}
       </section>}
       {visibleDialog === 'password' && <form onSubmit={event => { event.preventDefault(); void changePassword(); }}><fieldset disabled={passwordBusy} className="admin-editor-fields"><PasswordFields id="account-change" current={currentPassword} onCurrent={setCurrentPassword} next={nextPassword} onNext={setNextPassword} confirmation={confirmPassword} onConfirmation={setConfirmPassword} />{formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={passwordBusy || !currentPassword || nextPassword.length < 8 || !confirmPassword}>{passwordBusy && <LoaderCircle className="spinning" />}Save new password</Button></fieldset></form>}
-      {visibleDialog === 'audio' && <AudioOutputSettings pair={t.pair} enabled={dualAudio} routes={audioRoutes} onEnabled={value => { stopSpeech(); setDualAudio(value); }} onRoute={(lang, route) => { stopSpeech(); setAudioRoutes(current => ({ ...current, [lang]: route })); }} />}
+      {visibleDialog === 'audio' && <AudioOutputSettings pair={t.pair} enabled={dualAudio} routes={audioRoutes} locked={locked} onEnabled={value => { stopSpeech(); setDualAudio(value); }} onRoute={(lang, route) => { stopSpeech(); setDualAudio(true); setAudioRoutes(current => ({ ...current, [lang]: route })); }} />}
       {visibleDialog === 'settings' && <div className="settings-form">
         <div className="profile-setting"><span>{ownName}</span><Button type="button" variant="ghost" onClick={() => open('name')}>Edit name</Button></div>
         <div className="profile-setting profile-score"><span><GraduationCap />{ieltsScore ? `IELTS ${ieltsScore}` : 'IELTS level not set'}</span><Button type="button" variant="ghost" onClick={() => open('ielts')}>Set IELTS level</Button></div>

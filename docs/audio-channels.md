@@ -1,51 +1,54 @@
 # Audio channels and conversation response time
 
-## Listener routing
+## Two input/output channels
 
 Open **Translator → Set up audio channels** (also available in Settings).
-Enable **Dual-channel interpretation**, then assign an output to each language.
-The assignment follows the language when the two panels exchange positions.
+Lucky scans the system's microphones and speakers as the panel opens, requesting
+microphone permission when needed to read device names. **Scan system devices**
+refreshes the shared inventory; hotplug events refresh it automatically.
 
-Examples:
+Each channel has a language, a **Microphone** selector and a **Speaker** selector.
+Selecting a device enables channel routing. Settings follow the language when
+the conversation panels exchange positions.
 
-| Listener language | Playback device | Channel |
-| --- | --- | --- |
-| English | Bluetooth headset | Both |
-| Chinese | Speakers / amplifier | Both |
-| English | Shared stereo headset | Left only |
-| Chinese | Shared stereo headset | Right only |
+| Channel | Language | Microphone | Speaker |
+| --- | --- | --- | --- |
+| 1 | English | USB microphone | Bluetooth headset |
+| 2 | Chinese | Bluetooth microphone | Amplifier |
 
-Connect the hardware using the operating system before choosing it in Lucky.
-Use **Find devices** to grant browser access and **Test sound** to check each
-listener's output. Test tones are generated locally and use no AI tokens.
-For a shared headset, disable the operating system's mono audio setting.
+The speaking channel records its chosen microphone; its words are translated
+and played on the other channel's speaker. **Test microphone** shows live input
+level for five seconds, with a stop button. It never uploads or saves audio.
+**Test speaker** plays a locally generated tone. Neither test uses AI tokens.
 
-This release uses the existing microphone and phrase-based translation:
-hold the speaking person's button, then release to translate and play the other
-language. It does not capture two microphones simultaneously or perform
-simultaneous speech-to-speech interpretation. Existing continuous recording
-behavior remains unchanged.
+A selected microphone is requested with an exact device constraint, so a missing
+input produces an error instead of recording another microphone. Channel capture
+uses a fixed speaker identity instead of guessing direction from voice changes.
+This release still records one microphone at a time using the existing recording
+controls. It does not perform simultaneous speech-to-speech interpretation.
 
-Audio choices are scoped to the current account workspace and browser tab.
-They are reset after reload or sign-out. Selecting a device does not change the
-system's default output. A failed selected output is not silently replaced with
-another output. Playback stops on output-device changes and when the page hides.
+Audio choices are scoped to the current account workspace and browser tab. They
+reset after reload or sign-out. Changing device assignments does not change the
+operating system defaults. Settings are locked while a conversation request is
+finishing. Playback stops when audio devices change or the page hides.
 
 ## Browser support
 
-Separate hardware outputs require `HTMLMediaElement.setSinkId`, output permission,
-and outputs exposed by the operating system. Device discovery uses
-`selectAudioOutput` when available; otherwise it requests microphone permission
-briefly to enumerate permitted devices, immediately releasing that microphone.
-Unsupported browsers show system output and left/right channel options. They
-cannot be made to connect two independent Bluetooth devices by website code.
+System discovery uses `enumerateDevices`, with a temporary permission stream
+released immediately after enumeration, even on failure. Cameras are excluded.
+Only devices exposed by the browser are listed. Some browsers additionally need
+output permission through **Allow another speaker** (`selectAudioOutput`).
 
-Left/right routing mixes the audio to mono and writes it only to the selected
-channel of a stereo WAV; the opposite channel contains silence. This requires
-stereo playback and browser audio decoding. The operating system may still
-apply mono mixing or hardware-specific routing.
+Separate speakers require `HTMLMediaElement.setSinkId` and permission. Unsupported
+browsers retain microphone selection and clearly mark speaker selection unavailable.
+A failed selected output is never silently replaced with another device.
 
-References: [Output device selection](https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/setSinkId),
+Left/right headset playback remains under **Advanced speaker options**. This is
+separate from the two input/output channels. It mixes audio to mono and writes
+only the selected side of a stereo WAV; disable system mono mixing to use it.
+
+References: [System device inventory](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/enumerateDevices),
+[Output device selection](https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/setSinkId),
 [Output permissions](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/selectAudioOutput).
 
 ## Coach response time

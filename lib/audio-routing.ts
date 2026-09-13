@@ -1,5 +1,5 @@
 export type AudioChannel = 'both' | 'left' | 'right';
-export type AudioRoute = { deviceId: string; channel: AudioChannel };
+export type AudioRoute = { inputDeviceId?: string; deviceId: string; channel: AudioChannel };
 export const DEFAULT_AUDIO_ROUTE: AudioRoute = { deviceId: '', channel: 'both' };
 
 export async function selectSink(audio: HTMLAudioElement, deviceId: string) {
