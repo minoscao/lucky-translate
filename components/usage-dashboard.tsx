@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { accountRequest } from '@/lib/account';
-import { usageCost, usageMinutes, usageNumber as number } from '@/lib/usage-dashboard';
+import { usageCost, usageMinutes, usageServices, usageNumber as number } from '@/lib/usage-dashboard';
 import type { UsageDashboardData, UsageDashboardResponse, UsagePeriod } from '@/lib/usage-dashboard';
 
 const periods: { key: UsagePeriod; label: string }[] = [{ key: 'today', label: 'Today' }, { key: 'month', label: 'This month' }, { key: 'total', label: 'All time' }];
@@ -57,16 +57,20 @@ export function UsageDashboardView({ data, loading, error, reload, period, onPer
     { label: 'Recaps', value: usageMinutes(usage.recapSeconds) },
     { label: 'Total usage', value: usageMinutes(usage.totalSeconds) },
     { label: 'Actual tokens', value: number(usage.actualTokens) },
-    { label: 'Actual cost · USD', value: usageCost(usage.costMicros) },
+    { label: 'Estimated cost · USD', value: usageCost(usage.costMicros) },
   ] : [];
   return <section className="usage-dashboard" aria-label="Usage dashboard" aria-busy={loading}>
     <header><h3>{title}</h3><Button type="button" variant="ghost" disabled={loading} onClick={reload} aria-label="Refresh usage"><RefreshCw className={loading ? 'spinning' : ''} /></Button></header>
     <div className="usage-periods" role="group" aria-label="Usage period">{periods.map(item => <Button key={item.key} type="button" variant={period === item.key ? 'secondary' : 'ghost'} aria-pressed={period === item.key} onClick={() => onPeriodChange(item.key)}>{item.label}</Button>)}</div>
     <div className="usage-metrics">{metrics.map(item => <article key={item.label}><span>{item.label}</span><strong>{item.value}</strong></article>)}</div>
+    {usage && <div className="usage-services" aria-label="Cost by service">{usageServices(usage).map(service => <article key={service.key}>
+      <div><strong>{service.label}</strong><small>{service.usage} · {number(service.requests)} requests</small>{service.note && <small>{service.note}</small>}</div>
+      <strong>{usageCost(service.cost)}</strong>
+    </article>)}</div>}
     <p role="status">{data ? `Updated ${new Date(data.updatedAt).toLocaleTimeString('en-US')}` : loading ? 'Loading usage…' : 'Usage unavailable.'}</p>
     {error && <p role="alert">{error}</p>}
     {usage && <><p className="usage-token-breakdown">Input {number(usage.inputTokens)} · Output {number(usage.outputTokens)} · Cached input {number(usage.cachedTokens)}</p>
       {usage.unreportedRequests > 0 && <p role="status">Token total is incomplete: {number(usage.unreportedRequests)} requests have no reported usage.</p>}
-      <details className="inline-help"><summary>How usage is measured</summary><p>Minutes are text-based billed usage, not elapsed call time. Conversation includes Coach practice and assessments. Total includes conversation, translation and recaps. Tokens are actual model-reported usage, including failed attempts, and are never converted from minutes. Cached input is already included in input tokens. Cost uses each request’s recorded price, including audio services and failed attempts, with no display multiplier. Audio services billed by duration do not add text tokens. Refreshes every 5 seconds while open, after each request’s usage is recorded.</p></details></>}
+      <details className="inline-help"><summary>How usage is measured</summary><p>Conversation, translation and recap minutes are text-based billed usage, not elapsed call time. AI text includes these services and assessments. Tokens are model-reported usage, including recorded failed attempts, and are never converted from minutes. Cached input is already included in input tokens.</p><p>Speech recognition measures submitted audio. Speech generation measures generated audio; durations marked estimated are calculated from text length. Missing durations are excluded from minutes, but their recorded costs remain included. Audio minutes are separate from Total usage and do not add text tokens. Requests count cloud calls, so a reply split into two audio segments counts twice. Replaying cached audio makes no new cloud request.</p><p>Costs use each request’s saved rate and are estimates, not the provider’s final invoice. Free allowances, discounts, taxes and unrecorded provider charges are not included. All service costs are included in the total once, with no display multiplier. Refreshes every 5 seconds while open, after usage is recorded.</p></details></>}
   </section>;
 }

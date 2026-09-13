@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     if (!contentType.startsWith('audio/') && !audioData?.byteLength) return json({ error: 'The voice service is temporarily unavailable. Please tap the speaker to try again.' }, 502);
     const synthesisMs = performance.now() - synthesisStarted;
     const estimatedSeconds = Math.max(1, text.length / 12), cost = estimatedSeconds / 60 * .0002;
-    await recordServiceCost(account, '语音播放', 'cloudflare', 'melotts', cost, { usdPerMinute: .0002, estimatedSeconds });
+    await recordServiceCost(account, '语音播放', 'cloudflare', 'melotts', cost, { usdPerMinute: .0002, estimatedSeconds, durationSource: 'text_estimate' });
     return new Response(audioData || response.body, { headers: { 'Content-Type': contentType.startsWith('audio/') ? contentType : 'audio/wav', 'Cache-Control': 'no-store', 'Server-Timing': `synthesis;dur=${synthesisMs.toFixed(1)},total;dur=${(performance.now() - started).toFixed(1)}`, 'X-Lucky-Usage-Tokens': '0', 'X-Lucky-Usage-Cost': cost.toFixed(12) } });
   } catch (error) { return json({ error: 'Could not generate the voice. Please tap the speaker to try again.' }, (error as { status?: number }).status || 500); }
 }

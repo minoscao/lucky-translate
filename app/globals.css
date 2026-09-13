@@ -209,6 +209,13 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .usage-dashboard .usage-metrics span, .usage-dashboard > p { margin: 0; color: var(--muted-foreground); font-size: .75rem; }
 .usage-dashboard .usage-metrics strong { color: var(--primary); font-size: 1.2rem; overflow-wrap: anywhere; }
 .usage-dashboard > [role="alert"] { color: var(--destructive); }
+.usage-services { display: grid; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; font-variant-numeric: tabular-nums; }
+.usage-services article { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; min-width: 0; }
+.usage-services article + article { border-top: 1px solid var(--border); }
+.usage-services article > div { display: grid; gap: 4px; min-width: 0; }
+.usage-services strong { font-size: .82rem; overflow-wrap: anywhere; }
+.usage-services article > strong { color: var(--primary); flex-shrink: 0; }
+.usage-services small { color: var(--muted-foreground); font-size: .72rem; overflow-wrap: anywhere; }
 .usage-token-breakdown { line-height: 1.6; }
 .usage-details article { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 4px 16px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--secondary); font-variant-numeric: tabular-nums; }
 .usage-details article > span { color: var(--muted-foreground); font-size: .8125rem; }

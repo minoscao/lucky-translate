@@ -121,7 +121,7 @@ function ClientGrid({ users, select, create }: { users: AdminUser[]; select: (us
         <span><strong>{user.username}</strong><small>{user.email || '尚未绑定邮箱'}</small></span>
         <span><b className={`member-state ${user.status}`}>{user.level.toUpperCase()}</b><small>{stateLabel(user.status)}</small></span>
         <span><strong>{usage ? usageMinutes(usage.totalSeconds) : '—'}</strong><small>{usage ? `对话 ${usageMinutes(usage.conversationSeconds)} · 翻译 ${usageMinutes(usage.translationSeconds)}` : '等待用量数据'}</small><small>{usage ? formatPoints(usage.totalSeconds) : '—'}</small></span>
-        <span><strong>{usage ? `${usageNumber(usage.actualTokens)} tokens` : '—'}</strong><small>{usage ? usageCost(usage.costMicros) : '—'}</small>{Boolean(usage?.unreportedRequests) && <small>部分请求尚无 Token 数据</small>}</span>
+        <span><strong>{usage ? `${usageNumber(usage.actualTokens)} tokens` : '—'}</strong><small>{usage ? `${usageCost(usage.costMicros)} · est.` : '—'}</small>{usage && <><small>Speech generation {usageCost(usage.speechCostMicros ?? 0)}</small><small>Speech recognition {usageCost(usage.recognitionCostMicros ?? 0)}</small></>}{Boolean(usage?.unreportedRequests) && <small>部分请求尚无 Token 数据</small>}</span>
         <span><strong>{bytes(user.storage.bytes)}</strong><small>上限 {bytes(user.storage.limitBytes)}</small></span><span className="client-list-open">查看</span>
       </button>;
     })}</div></section>

@@ -10,7 +10,7 @@ const moduleSource = `const getDb=()=>globalThis.__tokenDb, getRetentionRules=as
 const { recordDeepSeekUsage, enforceLimits, periodKeys } = await import('data:text/javascript;base64,' + Buffer.from(ts.transpile(moduleSource, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext })).toString('base64'));
 const dashboardSource = (await read('../lib/server/usage-dashboard.ts')).replace(/^import .*;\r?\n/gm, '');
 const sharedUsage = await read('../lib/usage-dashboard.ts');
-const { usageDashboard, usageDirectory } = await import('data:text/javascript;base64,' + Buffer.from(ts.transpile(`const getDb=()=>globalThis.__tokenDb; const periodKeys=()=>globalThis.__dashboardPeriod; ${sharedUsage} ${dashboardSource}`, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext })).toString('base64'));
+const { usageDashboard, usageDirectory, emptyUsage } = await import('data:text/javascript;base64,' + Buffer.from(ts.transpile(`const getDb=()=>globalThis.__tokenDb; const periodKeys=()=>globalThis.__dashboardPeriod; ${sharedUsage} ${dashboardSource}`, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext })).toString('base64'));
 const schema = await read('../drizzle/0000_noisy_anthem.sql') + await read('../drizzle/0003_monthly_token_limit.sql');
 const planSource = await read('../lib/membership-plans.ts');
 const pointSource = (await read('../lib/points.ts')).replace(/^import .*;\r?\n/gm, '');
@@ -85,7 +85,7 @@ test('dashboard totals use complete isolated history and real tokens including f
     event.run('other', 'other', 9000, 0, 999, '{}', Date.parse('2026-09-11T00:00:00+08:00'));
     event.run('missing', 'test', 0, 0, 0, JSON.stringify({ usageReported: false }), Date.parse('2026-09-11T00:00:00+08:00'));
     const { periods } = await usageDashboard('test');
-    assert.deepEqual(periods.today, { conversationSeconds: 360, translationSeconds: 240, recapSeconds: 60, totalSeconds: 660, actualTokens: 2460, inputTokens: 2050, cachedTokens: 820, outputTokens: 410, unreportedRequests: 1, costMicros: 206 });
+    assert.deepEqual(periods.today, { ...emptyUsage(), conversationSeconds: 360, translationSeconds: 240, recapSeconds: 60, totalSeconds: 660, actualTokens: 2460, inputTokens: 2050, cachedTokens: 820, outputTokens: 410, unreportedRequests: 1, costMicros: 206, modelCostMicros: 206, modelRequests: 206 });
     assert.equal(periods.month.actualTokens, 2485);
     assert.equal(periods.total.actualTokens, 2520);
     assert.equal(periods.month.totalSeconds, 780);
@@ -103,6 +103,49 @@ test('dashboard totals use complete isolated history and real tokens including f
     assert.equal(directory.dashboard.periods.total.totalSeconds, 10839);
     assert.equal(directory.clients.test.periods.total.actualTokens, 2528);
 
+  } finally { db.close(); delete globalThis.__dashboardPeriod; }
+});
+
+test('audio cost breakdown preserves historical prices, estimates, account isolation and period totals without inventing tokens', async () => {
+  const db = setup();
+  globalThis.__dashboardPeriod = { day: '2026-09-11', month: '2026-09' };
+  try {
+    db.sqlite.exec("INSERT INTO users(id,username,password_hash,created_at,updated_at) VALUES('other','other','disabled',0,0)");
+    const insert = db.sqlite.prepare("INSERT INTO usage_events(id,user_id,feature,provider,model,cost_micros,price_snapshot,created_at) VALUES(?,?,'service',?,?,?,?,?)");
+    const event = (id, provider, model, cost, snapshot, day = '2026-09-11', owner = 'test') => insert.run(id, owner, provider, model, cost, JSON.stringify(snapshot), Date.parse(`${day}T00:00:00+08:00`));
+    event('model', 'deepseek', 'model', 100, { actualTokens: 77 });
+    event('recognition', 'cloudflare', 'whisper-large-v3-turbo', 510, { seconds: 60, usdPerMinute: .00051 });
+    event('old-speech', 'cloudflare', 'melotts', 100, { estimatedSeconds: 30, usdPerMinute: .0002 });
+    event('speech', 'cloudflare', 'melotts', 200, { estimatedSeconds: 60, durationSource: 'text_estimate' });
+    event('unknown-duration', 'cloudflare', 'melotts', 9, {});
+    event('unknown-recognition-duration', 'cloudflare', 'whisper', 11, {});
+    event('other-service', 'external', 'future-model', 33, {});
+    event('membership', 'membership', 'plan', 9999999, {});
+    event('month', 'cloudflare', 'melotts', 400, { estimatedSeconds: 120 }, '2026-09-01');
+    event('previous-month', 'cloudflare', 'melotts', 600, { estimatedSeconds: 180 }, '2026-08-31');
+    event('other-account', 'cloudflare', 'melotts', 5000, { estimatedSeconds: 1500 }, '2026-09-11', 'other');
+    const { periods } = await usageDashboard('test');
+    assert.equal(periods.today.actualTokens, 77);
+    assert.equal(periods.today.totalSeconds, 0);
+    assert.equal(periods.today.speechSeconds, 90);
+    assert.equal(periods.today.speechRequests, 3);
+    assert.equal(periods.today.speechEstimatedRequests, 2);
+    assert.equal(periods.today.speechUnknownRequests, 1);
+    assert.equal(periods.today.speechCostMicros, 309);
+    assert.equal(periods.today.recognitionCostMicros, 521);
+    assert.equal(periods.today.recognitionSeconds, 60);
+    assert.equal(periods.today.recognitionRequests, 2);
+    assert.equal(periods.today.recognitionUnknownRequests, 1);
+    assert.equal(periods.today.otherCostMicros, 33);
+    assert.equal(periods.today.costMicros, 963);
+    assert.equal(periods.month.speechCostMicros, 709);
+    assert.equal(periods.total.speechCostMicros, 1309);
+    for (const u of Object.values(periods)) assert.equal(u.costMicros, u.modelCostMicros + u.recognitionCostMicros + u.speechCostMicros + u.otherCostMicros);
+    const directory = await usageDirectory();
+    assert.deepEqual(directory.clients.test.periods, periods);
+    assert.equal(directory.dashboard.periods.today.speechCostMicros, 5309);
+    assert.equal(directory.dashboard.periods.today.actualTokens, 77);
+    assert.deepEqual((await usageDashboard('empty')).periods.today, emptyUsage());
   } finally { db.close(); delete globalThis.__dashboardPeriod; }
 });
 

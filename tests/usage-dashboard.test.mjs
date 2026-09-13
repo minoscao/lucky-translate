@@ -14,7 +14,7 @@ const Button=props=>React.createElement('button',props),RefreshCw=()=>null,accou
 ${sharedUsage}
 const number=usageNumber;
 ${strip(await read('../components/usage-dashboard.tsx'))}`);
-const { UsageDashboard } = await import(dashboardModule);
+const { UsageDashboard, UsageDashboardView, emptyUsage } = await import(dashboardModule);
 const data = tokens => ({ dashboard: { updatedAt: 1, periods: Object.fromEntries(['today', 'month', 'total'].map(key => [key, { conversationSeconds: 60, translationSeconds: 120, recapSeconds: 30, totalSeconds: 210, actualTokens: tokens, inputTokens: tokens - 2, outputTokens: 2, cachedTokens: 1, unreportedRequests: 0, costMicros: 4321 }])) } });
 
 test('dashboard refreshes reported data, preserves stale data on failure and ignores a closed client response', async () => {
@@ -47,6 +47,27 @@ test('dashboard refreshes reported data, preserves stale data on failure and ign
     await act(async () => pending.resolve(data(12)));
     assert.ok(!shown().includes('2,345'));
   } finally { if (renderer) await act(async () => renderer.unmount()); globalThis.document = oldDocument; }
+});
+
+test('shared dashboard separates small audio costs and marks estimated or missing duration', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const dashboard = data(77).dashboard;
+  dashboard.periods.total = { ...emptyUsage(), ...dashboard.periods.total, costMicros: 963, modelCostMicros: 100, modelRequests: 1,
+    recognitionCostMicros: 521, recognitionSeconds: 60, recognitionRequests: 2, recognitionUnknownRequests: 1,
+    speechCostMicros: 309, speechSeconds: 90, speechRequests: 3, speechEstimatedRequests: 2, speechUnknownRequests: 1, otherCostMicros: 33, otherRequests: 1 };
+  let renderer;
+  try {
+    await act(async () => { renderer = create(React.createElement(UsageDashboardView, { data: dashboard, loading: false, error: '', reload() {}, period: 'total', onPeriodChange() {} })); });
+    const rows = renderer.root.findByProps({ 'aria-label': 'Cost by service' }).findAllByType('article');
+    const content = rows.map(row => row.findAllByType('strong').map(n => n.children.join('')).join(' '));
+    assert.deepEqual(content, ['AI text $0.0001', 'Speech recognition $0.000521', 'Speech generation $0.000309', 'Other services $0.000033']);
+    const shown = JSON.stringify(renderer.toJSON());
+    assert.ok(shown.includes('1.5 min · estimated'));
+    assert.ok(shown.includes('requests missing duration'));
+    assert.ok(shown.includes('Estimated cost · USD'));
+    assert.ok(shown.includes('$0.000963'));
+    assert.ok(!shown.includes('Actual cost'));
+  } finally { if (renderer) await act(async () => renderer.unmount()); }
 });
 
 test('directory period selection changes the overview and every client row together', async () => {

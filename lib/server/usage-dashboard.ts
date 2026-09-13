@@ -16,15 +16,35 @@ async function readUsage(userId: string | null): Promise<UsageDashboardResponse>
       db.prepare(`SELECT user_id, SUM(training_seconds) conversationSeconds, SUM(translation_seconds) translationSeconds,
         SUM(active_seconds) totalSeconds FROM usage_daily
         WHERE (?1 IS NULL OR user_id=?1) AND day>=?2 AND day<=?3 GROUP BY user_id`).bind(userId, fromDay, day).all<{ user_id: string; conversationSeconds: number; translationSeconds: number; totalSeconds: number }>(),
-      db.prepare(`SELECT user_id,
+      db.prepare(`WITH events AS (
+        SELECT *, CASE
+          WHEN provider='deepseek' THEN 'model'
+          WHEN provider='cloudflare' AND model IN ('melotts','@cf/myshell-ai/melotts') THEN 'speech'
+          WHEN provider='cloudflare' AND model IN ('whisper','whisper-large-v3-turbo','@cf/openai/whisper-large-v3-turbo') THEN 'recognition'
+          ELSE 'other' END service
+        FROM usage_events WHERE (?1 IS NULL OR user_id=?1) AND provider!='membership' AND created_at>=?2 AND created_at<=?3
+      ) SELECT user_id,
         SUM(CASE WHEN provider='deepseek' THEN COALESCE(json_extract(price_snapshot,'$.actualTokens'), input_tokens+output_tokens) ELSE 0 END) actualTokens,
         SUM(input_tokens) inputTokens, SUM(output_tokens) outputTokens, SUM(cached_tokens) cachedTokens,
         SUM(cost_micros) costMicros,
+        SUM(CASE WHEN service='model' THEN cost_micros ELSE 0 END) modelCostMicros,
+        SUM(service='model') modelRequests,
+        SUM(CASE WHEN service='recognition' THEN cost_micros ELSE 0 END) recognitionCostMicros,
+        SUM(CASE WHEN service='recognition' THEN COALESCE(json_extract(price_snapshot,'$.seconds'),0) ELSE 0 END) recognitionSeconds,
+        SUM(service='recognition') recognitionRequests,
+        SUM(service='recognition' AND json_extract(price_snapshot,'$.seconds') IS NULL) recognitionUnknownRequests,
+        SUM(CASE WHEN service='speech' THEN cost_micros ELSE 0 END) speechCostMicros,
+        SUM(CASE WHEN service='speech' THEN COALESCE(json_extract(price_snapshot,'$.seconds'),json_extract(price_snapshot,'$.estimatedSeconds'),0) ELSE 0 END) speechSeconds,
+        SUM(service='speech') speechRequests,
+        SUM(service='speech' AND json_extract(price_snapshot,'$.seconds') IS NULL AND json_extract(price_snapshot,'$.estimatedSeconds') IS NOT NULL) speechEstimatedRequests,
+        SUM(service='speech' AND json_extract(price_snapshot,'$.seconds') IS NULL AND json_extract(price_snapshot,'$.estimatedSeconds') IS NULL) speechUnknownRequests,
+        SUM(CASE WHEN service='other' THEN cost_micros ELSE 0 END) otherCostMicros,
+        SUM(service='other') otherRequests,
         SUM(CASE WHEN provider='deepseek' AND (json_extract(price_snapshot,'$.usageReported')=0 OR
           (json_extract(price_snapshot,'$.usageReported') IS NULL AND input_tokens+output_tokens=0 AND COALESCE(json_extract(price_snapshot,'$.actualTokens'),0)=0))
           THEN 1 ELSE 0 END) unreportedRequests
-        FROM usage_events WHERE (?1 IS NULL OR user_id=?1) AND provider!='membership' AND created_at>=?2 AND created_at<=?3 GROUP BY user_id`)
-        .bind(userId, fromTime, updatedAt).all<{ user_id: string } & Pick<UsageMetrics, 'actualTokens' | 'inputTokens' | 'outputTokens' | 'cachedTokens' | 'unreportedRequests' | 'costMicros'>>(),
+        FROM events GROUP BY user_id`)
+        .bind(userId, fromTime, updatedAt).all<{ user_id: string } & Partial<UsageMetrics>>(),
     ]);
     return { period, time: time.results, events: events.results };
   }));
