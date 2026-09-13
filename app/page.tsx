@@ -3,7 +3,7 @@
 import { PasswordFields } from '@/components/password-fields';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
-import { ArrowDownUp, ArrowLeft, ArrowRight, ArrowUpFromLine, Check, ChevronDown, ChevronUp, CircleHelp, Copy, Download, GraduationCap, History, LoaderCircle, LockKeyhole, LogOut, Mic, Settings2, ShieldCheck, Square, Volume2, X } from 'lucide-react';
+import { ArrowDownUp, ArrowLeft, ArrowRight, ArrowUpFromLine, Check, ChevronDown, ChevronUp, CircleHelp, Copy, Download, GraduationCap, History, Headphones, LoaderCircle, LockKeyhole, LogOut, Mic, Settings2, ShieldCheck, Square, Volume2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,9 @@ import { INTERFACE_COPY } from '@/lib/interface-copy';
 import { useCoach } from '@/hooks/use-coach';
 import { useTranslator } from '@/hooks/use-translator';
 import { synthesizeSpeechDirect } from '@/lib/direct-api';
+import { playAudioSegments } from '@/lib/audio-playback';
+import { AudioOutputSettings } from '@/components/audio-output-settings';
+import { AudioRoute, DEFAULT_AUDIO_ROUTE, routeAudio, selectSink, speechSegments } from '@/lib/audio-routing';
 import { validEmail, validUsername, validVerificationCode } from '@/lib/auth-inputs';
 import { formatPoints } from '@/lib/points';
 import { FishAmount } from '@/components/fish-amount';
@@ -227,7 +230,7 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
   const [authEmail, setAuthEmail] = useState(''), [authUsername, setAuthUsername] = useState(''), [authPassword, setAuthPassword] = useState(''), [authError, setAuthError] = useState(loadError ? '暂时无法读取账户，请刷新后重试' : '');
   const [confirmPassword, setConfirmPassword] = useState(''), [authConfirmation, setAuthConfirmation] = useState(''), [authNotice, setAuthNotice] = useState(''), [passwordBusy, setPasswordBusy] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
-  const [dialog, setDialog] = useState<'settings' | 'help' | 'history' | 'text' | 'edit' | 'name' | 'ielts' | 'password' | 'usage' | null>(null);
+  const [dialog, setDialog] = useState<'settings' | 'help' | 'history' | 'text' | 'edit' | 'name' | 'ielts' | 'password' | 'usage' | 'audio' | null>(null);
   const [dialogSide, setDialogSide] = useState<0 | 1>(1);
   const [draftText, setDraftText] = useState('');
   const [formError, setFormError] = useState(''), [copied, setCopied] = useState(false);
@@ -240,6 +243,8 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
   const [currentPassword, setCurrentPassword] = useState(''), [nextPassword, setNextPassword] = useState('');
   const [editingId, setEditingId] = useState<number>();
   const [speechSpeed, setSpeechSpeed] = useState(1);
+  const [dualAudio, setDualAudio] = useState(false);
+  const [audioRoutes, setAudioRoutes] = useState<Record<string, AudioRoute>>({});
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('face-to-face');
   const [soloDirection, setSoloDirection] = useState<SoloDirection>('listening');
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -336,14 +341,14 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
   const stopSpeech = useCallback(() => {
     speechRequest.current++; speechAbort.current?.abort(); speechAbort.current = undefined;
     window.speechSynthesis?.cancel();
-    const audio = speechAudio.current; if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
+    const audio = speechAudio.current; speechAudio.current = undefined; if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
     if (speechUrl.current) URL.revokeObjectURL(speechUrl.current); speechUrl.current = ''; setSpeaking(false);
   }, []);
   const playSpeech = useCallback(async (text: string, lang: string) => {
     stopSpeech();
     const requestId = ++speechRequest.current, abort = new AbortController(); speechAbort.current = abort; setSpeaking(true);
     try {
-      if (lang.startsWith('zh') && 'speechSynthesis' in window) {
+      if (lang.startsWith('zh') && 'speechSynthesis' in window && !(appMode === 'translator' && dualAudio)) {
         const speech = new SpeechSynthesisUtterance(text); speech.lang = lang; speech.rate = speechSpeed;
         const voices = window.speechSynthesis.getVoices(), voice = voices.find(item => item.lang.toLowerCase().startsWith(lang.toLowerCase())) || voices.find(item => item.lang.toLowerCase().startsWith('zh'));
         if (voice) speech.voice = voice;
@@ -351,19 +356,23 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
         speech.onerror = () => { if (requestId === speechRequest.current) { stopSpeech(); reportError('中文朗读失败，请检查设备语音设置'); } };
         window.speechSynthesis.speak(speech); return;
       }
-      const result = await synthesizeSpeechDirect({ accountId: scope.owner, text, language: lang, speed: speechSpeed, signal: abort.signal });
-      addUsage(result.usage.tokens, result.usage.cost); if (requestId !== speechRequest.current) return;
-      const url = URL.createObjectURL(result.audio), audio = new Audio(url);
-      audio.playbackRate = speechSpeed;
-      audio.onended = () => { if (requestId === speechRequest.current) stopSpeech(); };
-      audio.onerror = () => { if (requestId === speechRequest.current) { stopSpeech(); reportError('语音播放失败，请重试'); } };
-      speechAudio.current = audio; speechUrl.current = url;
-      await audio.play();
+      const route = appMode === 'translator' && dualAudio ? audioRoutes[lang] || DEFAULT_AUDIO_ROUTE : undefined;
+      const audio = new Audio(); speechAudio.current = audio;
+      await selectSink(audio, route?.deviceId || '');
+      if (requestId !== speechRequest.current) return;
+      const segments = appMode === 'coach' ? speechSegments(text) : [text];
+      const prepare = async (segment: string) => {
+        const result = await synthesizeSpeechDirect({ accountId: scope.owner, text: segment, language: lang, speed: speechSpeed, signal: abort.signal });
+        if (scope.active) addUsage(result.usage.tokens, result.usage.cost);
+        return route ? routeAudio(result.audio, route.channel) : result.audio;
+      };
+      await playAudioSegments({ segments, prepare, audio, signal: abort.signal, speed: speechSpeed });
+      if (requestId === speechRequest.current) stopSpeech();
     } catch (cause) {
       if (requestId !== speechRequest.current || abort.signal.aborted) return;
       stopSpeech(); reportError(cause instanceof Error && cause.name === 'NotAllowedError' ? '浏览器阻止了自动播放，请点译文旁的喇叭播放' : cause instanceof Error ? cause.message : '朗读失败，请重试');
     }
-  }, [addUsage, reportError, speechSpeed, stopSpeech]);
+  }, [addUsage, reportError, speechSpeed, stopSpeech, appMode, dualAudio, audioRoutes, scope]);
   useEffect(() => {
     const request = t.autoSpeech;
     const mayPlay = (t.mode === 'idle' && t.phase === 'ready') || (layoutMode === 'single-operator' && t.mode === 'continuous' && t.phase === 'listening');
@@ -376,7 +385,19 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
     if (appMode !== 'coach' || !request || request.id === playedCoachSpeech.current) return;
     playedCoachSpeech.current = request.id; void playSpeech(request.text, 'en');
   }, [appMode, coach.speechRequest, playSpeech]);
-  useEffect(() => stopSpeech, [stopSpeech]);
+  useEffect(() => {
+    const hidden = () => { if (document.hidden) stopSpeech(); };
+    document.addEventListener('visibilitychange', hidden);
+    window.addEventListener('pagehide', stopSpeech);
+    return () => { stopSpeech(); document.removeEventListener('visibilitychange', hidden); window.removeEventListener('pagehide', stopSpeech); };
+  }, [stopSpeech]);
+  useEffect(() => {
+    if (!dualAudio) return;
+    // Output changes can make the browser fall back to a loudspeaker. Stop first.
+    const changed = () => { if (speechAudio.current) { stopSpeech(); reportError('Audio devices changed. Check your audio channels before playing again.'); } };
+    navigator.mediaDevices?.addEventListener('devicechange', changed);
+    return () => navigator.mediaDevices?.removeEventListener('devicechange', changed);
+  }, [dualAudio, stopSpeech, reportError]);
   const copyConversation = async () => {
     try { await navigator.clipboard.writeText(conversationText(t.history, ownName)); setCopied(true); clearTimeout(copyTimer.current); copyTimer.current = setTimeout(() => setCopied(false), 1800); }
     catch { setFormError('复制失败，请尝试导出文本'); }
@@ -466,12 +487,13 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
   if (appMode === null) return <main className="mode-page"><section className="mode-card">{showOnboarding && <Onboarding onComplete={completeOnboarding}/>}<Image className="lucky-cat" src="/lucky-cat.webp" width={128} height={128} alt="Lucky cat" unoptimized /><p className="mode-brand">LUCKY</p><h1>What would you like to do?</h1><div className="member-summary"><span>{account.username} · {account.level.toUpperCase()}</span><strong title={`${balancePeriod} remaining`}><FishAmount seconds={remaining} label={balancePeriod} /></strong><small>Cloud storage {(account.storage.bytes / 1024 / 1024).toFixed(1)} / {(account.storage.limitBytes / 1024 / 1024).toFixed(0)} MB · Saved for {account.storage.retentionMonths} {account.storage.retentionMonths === 1 ? 'month' : 'months'}</small></div>{account.storage.warning && <button className="storage-warning" onClick={() => { setAppMode('translator'); queueMicrotask(() => open('history')); }}>Storage nearly full. Export your conversations.</button>}<div className="mode-options"><Button onClick={() => { setCoachEntryStage('chat'); setAppMode('coach'); if (coach.history.length === 0 && !coach.busy) void coach.beginSession(); }}><strong>English Coach</strong><span>Have a natural conversation and practise afterwards</span></Button><Button variant="outline" onClick={() => setAppMode('translator')}><strong>Translator</strong><span>Translate a live conversation in both directions</span></Button></div><div className="mode-account-actions"><Button variant="ghost" className="mode-settings" onClick={() => { setSettingsReturnMode(null); setAppMode('translator'); queueMicrotask(() => open('settings')); }}><Settings2 />Settings</Button><Button variant="ghost" className="mode-settings" onClick={() => void logout()}><LogOut />Log out</Button></div></section></main>;
   if (appMode === 'coach') return <CoachMode onStopSpeech={stopSpeech} coach={coach} speaking={speaking} ieltsScore={ieltsScore} initialStage={coachEntryStage} onBack={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('chat'); setAppMode(null); }} onSettings={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('settings')); }} onIelts={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('ielts')); }} onSecurity={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('password')); }} onLogout={() => void logout()} onHowItWorks={() => { stopSpeech(); void coach.stopRecording(); setAppMode(null); queueMicrotask(() => setShowOnboarding(true)); }} onSpeak={text => void playSpeech(text, 'en')} />;
   return <main className="translator"><div className={`app-frame ${layoutMode === 'single-operator' ? 'single-operator' : ''}`}>
-    {panelOrder.map((side, index) => <LanguagePanel key={side} controller={t} onHistory={() => open('history')} totals={{ ...t.usageTotals, dayCost: account.usage.todayCost, dayTokens: account.usage.todayTokens, monthCost: account.usage.monthCost, monthTokens: account.usage.monthTokens }} multiplier={account.costMultiplier} side={side} visualRow={layoutMode === 'single-operator' ? index + 1 : side === 0 ? 1 : 3} isSelf={side === selfSide} facingAway={layoutMode === 'face-to-face' && side === 0} showRecord={layoutMode === 'face-to-face'} ownName={ownName} pair={t.pair} entries={panelEntries[side]} locked={locked} canSpeak={true} onLanguage={t.changePair} onEdit={(id, text) => editSentence(side, id, text)} onSpeak={text => void playSpeech(text, t.pair[side])} onBeforeRecord={stopSpeech} onUsage={() => open('usage', side)} />)}
+    {panelOrder.map((side, index) => <LanguagePanel key={side} controller={t} onHistory={() => open('history')} totals={{ ...t.usageTotals, dayCost: account.usage.todayCost, dayTokens: account.usage.todayTokens, monthCost: account.usage.monthCost, monthTokens: account.usage.monthTokens }} multiplier={account.costMultiplier} side={side} visualRow={layoutMode === 'single-operator' ? index + 1 : side === 0 ? 1 : 3} isSelf={side === selfSide} facingAway={layoutMode === 'face-to-face' && side === 0} showRecord={layoutMode === 'face-to-face'} ownName={ownName} pair={t.pair} entries={panelEntries[side]} locked={locked} canSpeak={true} onLanguage={pair => { stopSpeech(); t.changePair(pair); }} onEdit={(id, text) => editSentence(side, id, text)} onSpeak={text => void playSpeech(text, t.pair[side])} onBeforeRecord={stopSpeech} onUsage={() => open('usage', side)} />)}
     <section className={`control-deck ${layoutMode === 'single-operator' ? 'single-control-deck' : ''}`} aria-label="录音控制">
-      <div className="deck-top">{layoutMode === 'face-to-face' && <Button variant="outline" className="side-swap" onClick={() => t.swapSides()} disabled={locked} aria-label="上下切换双方位置" title="上下切换"><ArrowDownUp /><span>切换</span></Button>}<h1 className="wordmark">LUCKY<span>同声翻译</span></h1><div className="deck-actions">
+      <div className="deck-top">{layoutMode === 'face-to-face' && <Button variant="outline" className="side-swap" onClick={() => { stopSpeech(); t.swapSides(); }} disabled={locked} aria-label="上下切换双方位置" title="上下切换"><ArrowDownUp /><span>切换</span></Button>}<h1 className="wordmark">LUCKY<span>同声翻译</span></h1><div className="deck-actions">
         <Button variant="ghost" onClick={() => open('history')} aria-label="对话记录" title="对话记录"><History /></Button>
         <Button variant="ghost" onClick={() => open('settings')} aria-label="Settings" title="Settings"><Settings2 /></Button>
       </div></div>
+      <Button variant="outline" className="audio-channel-shortcut" onClick={() => { stopSpeech(); open('audio'); }}><Headphones />{dualAudio ? 'Audio channels · On' : 'Set up audio channels'}</Button>
       {layoutMode === 'single-operator' && <SoloDirectionControls controller={t} direction={soloDirection} selfSide={selfSide} otherSide={otherSide} onDirection={value => { setSoloDirection(value); try { localStorage.setItem('lucky-solo-direction', value); } catch {} }} onBeforeRecord={stopSpeech} />}
       {status && <output className={`status-line ${t.error ? 'has-error' : ''}`} aria-live="polite">{t.pending > 0 && !t.error && <LoaderCircle className="spinning" />}<span>{status}</span></output>}
       {t.failed && <Button variant="outline" className="retry-button" disabled={locked} onClick={t.retry}>重试上一句</Button>}
@@ -484,9 +506,9 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
     {speaking && <Button variant="secondary" className="speech-stop" onClick={stopSpeech}><Square />停止朗读</Button>}
   </div>
   <Dialog open={visibleDialog !== null} onOpenChange={value => { if (!value) { if (visibleDialog === 'name') saveName(ownName); else closeDialog(); t.setNeedsSettings(false); } }}>
-    <DialogContent className={`app-dialog ${visibleDialog === 'history' ? 'conversation-dialog' : ''} ${visibleDialog === 'edit' ? 'edit-dialog' : ''} ${visibleDialog === 'ielts' ? 'ielts-dialog' : ''} ${layoutMode === 'face-to-face' && dialogSide === 0 && !t.needsSettings && !['history', 'edit', 'usage', 'ielts'].includes(visibleDialog || '') ? 'upside-down' : ''}`} showCloseButton={false}>
-      <DialogHeader><DialogTitle>{visibleDialog === 'name' ? 'Your name' : visibleDialog === 'ielts' ? 'IELTS level' : visibleDialog === 'password' ? 'Change password' : visibleDialog === 'settings' ? 'Account & settings' : visibleDialog === 'history' ? '完整对话' : visibleDialog === 'edit' ? '修改当前这句' : visibleDialog === 'text' ? '输入文字' : visibleDialog === 'usage' ? 'Usage details' : '随时打开，面对面聊'}</DialogTitle><DialogDescription>
-        {visibleDialog === 'name' ? 'What should we call you?' : visibleDialog === 'ielts' ? 'Choose the level closest to yours so Lucky can adapt your practice. This is not an official assessment.' : visibleDialog === 'password' ? 'Choose a new password with at least 8 characters.' : visibleDialog === 'settings' ? 'Your preferences are saved to your account and this device.' : visibleDialog === 'history' ? (locked ? '正在整理最后的对话…' : `${t.history.length} 句 · 已同步到个人云存档`) : visibleDialog === 'edit' ? `按${language(t.pair[dialogSide])?.label}修改，保存后更新双方译文。` : visibleDialog === 'text' ? '任意语言都可以，会同时转换成双方的语言。' : visibleDialog === 'usage' ? 'View your account’s costs, tokens and fish usage.' : '添加到手机主屏幕，像应用一样打开。'}
+    <DialogContent className={`app-dialog ${visibleDialog === 'history' ? 'conversation-dialog' : ''} ${visibleDialog === 'edit' ? 'edit-dialog' : ''} ${visibleDialog === 'ielts' ? 'ielts-dialog' : ''} ${layoutMode === 'face-to-face' && dialogSide === 0 && !t.needsSettings && !['history', 'edit', 'usage', 'ielts', 'audio'].includes(visibleDialog || '') ? 'upside-down' : ''}`} showCloseButton={false}>
+      <DialogHeader><DialogTitle>{visibleDialog === 'name' ? 'Your name' : visibleDialog === 'ielts' ? 'IELTS level' : visibleDialog === 'password' ? 'Change password' : visibleDialog === 'audio' ? 'Audio channels' : visibleDialog === 'settings' ? 'Account & settings' : visibleDialog === 'history' ? '完整对话' : visibleDialog === 'edit' ? '修改当前这句' : visibleDialog === 'text' ? '输入文字' : visibleDialog === 'usage' ? 'Usage details' : '随时打开，面对面聊'}</DialogTitle><DialogDescription>
+        {visibleDialog === 'name' ? 'What should we call you?' : visibleDialog === 'ielts' ? 'Choose the level closest to yours so Lucky can adapt your practice. This is not an official assessment.' : visibleDialog === 'password' ? 'Choose a new password with at least 8 characters.' : visibleDialog === 'audio' ? 'Choose where each listener hears their translation.' : visibleDialog === 'settings' ? 'Your preferences are saved to your account and this device.' : visibleDialog === 'history' ? (locked ? '正在整理最后的对话…' : `${t.history.length} 句 · 已同步到个人云存档`) : visibleDialog === 'edit' ? `按${language(t.pair[dialogSide])?.label}修改，保存后更新双方译文。` : visibleDialog === 'text' ? '任意语言都可以，会同时转换成双方的语言。' : visibleDialog === 'usage' ? 'View your account’s costs, tokens and fish usage.' : '添加到手机主屏幕，像应用一样打开。'}
       </DialogDescription></DialogHeader>
       <DialogClose render={<Button variant="ghost" className="dialog-close" aria-label="Close" />}><X /></DialogClose>
       {visibleDialog === 'name' && <form onSubmit={event => { event.preventDefault(); saveName(draftName); }}><label htmlFor="display-name" className="field-label">Your name</label><Input id="display-name" className="app-input" value={draftName} onChange={event => setDraftName(event.target.value)} placeholder="Me" maxLength={24} autoComplete="nickname" /><p className="field-note">Saved to your account for next time.</p><Button type="submit" className="form-submit">{draftName.trim() ? 'Save name' : 'Use Me'}</Button></form>}
@@ -496,10 +518,12 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
         </button>)}
       </section>}
       {visibleDialog === 'password' && <form onSubmit={event => { event.preventDefault(); void changePassword(); }}><fieldset disabled={passwordBusy} className="admin-editor-fields"><PasswordFields id="account-change" current={currentPassword} onCurrent={setCurrentPassword} next={nextPassword} onNext={setNextPassword} confirmation={confirmPassword} onConfirmation={setConfirmPassword} />{formError && <p role="alert" className="form-error">{formError}</p>}<Button type="submit" className="form-submit" disabled={passwordBusy || !currentPassword || nextPassword.length < 8 || !confirmPassword}>{passwordBusy && <LoaderCircle className="spinning" />}Save new password</Button></fieldset></form>}
+      {visibleDialog === 'audio' && <AudioOutputSettings pair={t.pair} enabled={dualAudio} routes={audioRoutes} onEnabled={value => { stopSpeech(); setDualAudio(value); }} onRoute={(lang, route) => { stopSpeech(); setAudioRoutes(current => ({ ...current, [lang]: route })); }} />}
       {visibleDialog === 'settings' && <div className="settings-form">
         <div className="profile-setting"><span>{ownName}</span><Button type="button" variant="ghost" onClick={() => open('name')}>Edit name</Button></div>
         <div className="profile-setting profile-score"><span><GraduationCap />{ieltsScore ? `IELTS ${ieltsScore}` : 'IELTS level not set'}</span><Button type="button" variant="ghost" onClick={() => open('ielts')}>Set IELTS level</Button></div>
         <div className="profile-setting"><span>{account.username} · {account.level.toUpperCase()}</span><strong title={`${balancePeriod} remaining`}><FishAmount seconds={remaining} label={balancePeriod} /></strong></div><Button variant="outline" onClick={() => open('usage')}>Usage dashboard</Button>
+        {!settingsReturnMode && <Button variant="outline" onClick={() => { stopSpeech(); open('audio'); }}><Headphones />Audio channels</Button>}
         <label className="field-label" htmlFor="layout-mode">Layout</label>
         <Select value={layoutMode} onValueChange={value => { if (!value) return; const layout = value as LayoutMode; setLayoutMode(layout); try { localStorage.setItem('lucky-layout', layout); } catch {} }}><SelectTrigger id="layout-mode" className="app-input"><SelectValue>{layoutMode === 'face-to-face' ? 'Face to face · Both people' : 'One person · Listening / Speaking'}</SelectValue></SelectTrigger><SelectContent><SelectItem value="face-to-face">Face to face · Both people</SelectItem><SelectItem value="single-operator">One person · Listening / Speaking</SelectItem></SelectContent></Select>
         <label className="field-label" htmlFor="speech-speed">Playback speed</label>

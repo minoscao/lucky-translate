@@ -5,7 +5,7 @@ import { getDeepSeekKey } from './config';
 export type DeepSeekMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
 export async function deepSeekJson(account: Account, feature: string, messages: DeepSeekMessage[], signal: AbortSignal, maxTokens = 3000, validate?: (content: string) => void, retryInvalidOutput = false) {
-  await enforceLimits(account); const key = await getDeepSeekKey();
+  const [, key] = await Promise.all([enforceLimits(account), getDeepSeekKey()]);
   const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(60000)]);
   for (let attempt = 0; attempt < (retryInvalidOutput ? 2 : 1); attempt++) {
     requestSignal.throwIfAborted();

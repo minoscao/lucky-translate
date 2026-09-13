@@ -627,3 +627,12 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 
 .admin-client-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .admin-editor-fields { display: grid; min-width: 0; gap: 16px; padding: 0; border: 0; }
+.audio-output-settings { display: grid; gap: 16px; min-width: 0; }
+.audio-output-settings > button { white-space: normal; height: auto; min-height: 44px; }
+.audio-output-route { display: grid; gap: 8px; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); }
+.audio-output-route legend { padding: 0 6px; font-size: .9rem; font-weight: 600; }
+.audio-output-route .app-input { width: 100%; min-width: 0; }
+.audio-output-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.audio-output-actions button { min-height: 44px; flex: 1; }
+.audio-output-settings p { font-size: .85rem; line-height: 1.5; }
+.audio-channel-shortcut { min-height: 44px; width: 100%; }
