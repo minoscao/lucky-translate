@@ -356,6 +356,7 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 .record-control[data-warning=true] .record-timer { color: var(--destructive); }
 .record-control[data-warning=true] .coach-mic { background: var(--destructive); color: var(--background); outline: 2px solid var(--destructive); outline-offset: 2px; }
 .recording-notice { margin: 0; font-size: .8125rem; color: var(--muted-foreground); }
+.coach-audio-status { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 0 14px 4px; font-size: .8125rem; color: var(--muted-foreground); }
 .coach-record-hint { margin: 7px 0 10px; color: var(--muted-foreground); text-align: center; font-size: .68rem; }
 .coach-summary-button { align-self: center; height: 26px; margin: -4px auto 5px; padding-inline: 10px; color: var(--self-accent); font-size: .72rem; }
 .summary-spinner { width: 44px; height: 44px; margin: 0 auto 22px; color: var(--primary); }

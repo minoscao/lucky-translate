@@ -33,10 +33,17 @@ export async function translateDirect(input: { audio?: Blob; text?: string; pair
   return { empty: false as const, original: result.original, upper: result.upper, lower: result.lower, model: result.model || 'deepseek-v4-flash', usage: result.usage };
 }
 
-export async function synthesizeSpeechDirect(input: { accountId: string; text: string; language: string; voiceId?: string; speed: number; key?: string; signal: AbortSignal }) {
+export async function synthesizeSpeechDirect(input: { accountId: string; text: string; language: string; voiceId?: string; speed: number; key?: string; signal: AbortSignal; onChunk?: (chunk: Uint8Array) => void }) {
   const response = await fetch('/api/speech', { method: 'POST', credentials: 'same-origin', signal: input.signal, headers: { 'Content-Type': 'application/json', 'X-Lucky-Account': input.accountId }, body: JSON.stringify({ text: input.text, language: input.language }) });
   if (!response.ok) return responseError(response);
-  return { audio: await response.blob(), usage: { tokens: Number(response.headers.get('X-Lucky-Usage-Tokens')) || 0, cost: Number(response.headers.get('X-Lucky-Usage-Cost')) || 0 } };
+  let audio: Blob;
+  if (input.onChunk && response.body) {
+    const reader = response.body.getReader(), chunks: Uint8Array<ArrayBuffer>[] = [];
+    try { while (true) { const next = await reader.read(); if (next.done) break; const chunk = new Uint8Array(next.value); chunks.push(chunk); input.onChunk(chunk); } }
+    finally { reader.releaseLock(); }
+    audio = new Blob(chunks, { type: response.headers.get('Content-Type') || 'audio/wav' });
+  } else audio = await response.blob();
+  return { audio, usage: { tokens: Number(response.headers.get('X-Lucky-Usage-Tokens')) || 0, cost: Number(response.headers.get('X-Lucky-Usage-Cost')) || 0 } };
 }
 
 export async function createCustomVoiceDirect() { throw new DirectApiError('当前版本使用 Cloudflare 语音，不保存个人声音样本', 'voice_unavailable'); }

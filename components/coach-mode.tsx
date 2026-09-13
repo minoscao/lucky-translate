@@ -12,7 +12,7 @@ import { HighlightedText } from '@/components/highlighted-text';
 import { grammarHighlights } from '@/lib/text-highlights';
 
 type CoachController = ReturnType<typeof useCoach>;
-type Props = { coach: CoachController; speaking: boolean; ieltsScore?: number; initialStage?: 'chat' | 'dashboard'; onBack: () => void; onSettings: () => void; onIelts: () => void; onSecurity: () => void; onLogout: () => void; onHowItWorks: () => void; onStopSpeech: () => void; onSpeak: (text: string) => void };
+type Props = { coach: CoachController; speaking: boolean; playbackPending?: boolean; playbackError?: string; ieltsScore?: number; initialStage?: 'chat' | 'dashboard'; onBack: () => void; onSettings: () => void; onIelts: () => void; onSecurity: () => void; onLogout: () => void; onHowItWorks: () => void; onStopSpeech: () => void; onSpeak: (text: string) => void };
 type Stage = 'chat' | 'paused' | 'summarizing' | 'summary' | 'dashboard' | 'practice' | 'done';
 
 function RecallTables({ report }: { report: CoachDailySummary | CoachWeeklySummary }) {
@@ -44,7 +44,7 @@ const exportRecall = (report: CoachDailySummary | CoachWeeklySummary) => {
 };
 const highlightedText = (text: string) => <HighlightedText text={text} />;
 
-export function CoachMode({ coach, speaking, ieltsScore, initialStage = 'chat', onBack, onSettings, onIelts, onSecurity, onLogout, onHowItWorks, onStopSpeech, onSpeak }: Props) {
+export function CoachMode({ coach, speaking, playbackPending = false, playbackError = '', ieltsScore, initialStage = 'chat', onBack, onSettings, onIelts, onSecurity, onLogout, onHowItWorks, onStopSpeech, onSpeak }: Props) {
   const [draft, setDraft] = useState(''), [stage, setStage] = useState<Stage>(initialStage), [selectedSummary, setSelectedSummary] = useState<CoachDailySummary>();
   const [question, setQuestion] = useState(0), [answer, setAnswer] = useState(''), [checked, setChecked] = useState(false), [score, setScore] = useState(0);
   const view = useRef<HTMLDivElement>(null);
@@ -70,6 +70,8 @@ export function CoachMode({ coach, speaking, ieltsScore, initialStage = 'chat', 
         {coach.busy && <div className="coach-thinking"><LoaderCircle className="spinning" /> Thinking…</div>}
       </div></div>
       {coach.tip && <p className="coach-tip"><strong>Quick tip</strong> {coach.tip}</p>}{coach.error && <p className="coach-error" role="alert">{coach.error}</p>}
+      {playbackError && <p className="coach-error" role="alert">{playbackError}</p>}
+      {(playbackPending || speaking) && <div className="coach-audio-status"><span role="status">{playbackPending ? 'Preparing voice…' : 'Playing'}</span><Button variant="ghost" onClick={onStopSpeech}>{playbackPending ? 'Cancel audio' : 'Stop audio'}</Button></div>}
       <form className="coach-compose" onSubmit={submit}><Input value={draft} onChange={event => setDraft(event.target.value)} placeholder="Say something in English…" maxLength={2000} disabled={coach.busy || coach.recording} aria-label="Your English reply"/><Button type="submit" variant="secondary" disabled={!draft.trim() || coach.busy || coach.recording} aria-label="Send"><Send /></Button></form>
       <Button variant="ghost" className="coach-summary-button" disabled={coach.busy || coach.recording || coach.history.length < 2} onClick={() => void summarize()}>Review this conversation</Button>
       {coach.recordingNotice && <p className="recording-notice" role="status">{coach.recordingNotice}</p>}

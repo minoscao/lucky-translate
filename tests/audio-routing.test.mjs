@@ -38,6 +38,7 @@ test('splitting coach speech keeps every character and only splits at sentence e
   assert.equal(segments.length, 2); assert.equal(segments.join(''), text);
   assert.match(segments[0], /!\s$/);
   assert.deepEqual(speechSegments('Could you tell me a little more?'), ['Could you tell me a little more?']);
+  assert.deepEqual(speechSegments('That sounds exciting! Tell me how it started.'), ['That sounds exciting! ', 'Tell me how it started.']);
   assert.deepEqual(speechSegments('One long thought without a sentence boundary even when the message continues'), ['One long thought without a sentence boundary even when the message continues']);
 });
 

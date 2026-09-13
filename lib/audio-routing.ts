@@ -51,7 +51,7 @@ export function speechSegments(text: string): string[] {
   let match: RegExpExecArray | null;
   while ((match = boundary.exec(text))) {
     const end = match.index + match[0].length;
-    if (end >= 45 && end < text.length) return [text.slice(0, end), text.slice(end)];
+    if (end >= 12 && end < text.length) return [text.slice(0, end), text.slice(end)];
   }
   return [text];
 }
