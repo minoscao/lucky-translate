@@ -366,7 +366,7 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
         if (scope.active) addUsage(result.usage.tokens, result.usage.cost);
         return route ? routeAudio(result.audio, route.channel) : result.audio;
       };
-      await playAudioSegments({ segments, prepare, audio, signal: abort.signal, speed: speechSpeed });
+      await playAudioSegments({ segments, prepare, audio, signal: abort.signal, speed: speechSpeed, beforePlay: () => selectSink(audio, route?.deviceId || '') });
       if (requestId === speechRequest.current) stopSpeech();
     } catch (cause) {
       if (requestId !== speechRequest.current || abort.signal.aborted) return;

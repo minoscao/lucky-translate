@@ -39,9 +39,15 @@ released immediately after enumeration, even on failure. Cameras are excluded.
 Only devices exposed by the browser are listed. Some browsers additionally need
 output permission through **Allow another speaker** (`selectAudioOutput`).
 
-Separate speakers require `HTMLMediaElement.setSinkId` and permission. Unsupported
-browsers retain microphone selection and clearly mark speaker selection unavailable.
+The current translator player selects outputs using `HTMLMediaElement.setSinkId`
+and permission. Browsers without this method retain microphone selection and
+show system output for this player. This does not determine support for other
+playback methods or the native Android app.
 A failed selected output is never silently replaced with another device.
+
+Full device names preserve models reported by the browser. System default and
+communications aliases are not counted as extra physical speakers. Missing
+model information is explicitly labeled; Lucky does not guess a headset model.
 
 Left/right headset playback remains under **Advanced speaker options**. This is
 separate from the two input/output channels. It mixes audio to mono and writes
@@ -50,6 +56,40 @@ only the selected side of a stereo WAV; disable system mono mixing to use it.
 References: [System device inventory](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/enumerateDevices),
 [Output device selection](https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/setSinkId),
 [Output permissions](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/selectAudioOutput).
+
+## Standalone two-speaker web test
+
+Open **/audio-test**, also linked from audio channel settings. This is the playback
+equivalent of the native **Lucky Audio Test 0.2.4** in the sibling Android project.
+The user has verified different music on headphones and an amplifier in that app.
+Native success does not establish browser routing, which this page lets them test.
+
+1. Connect both devices and tap **Scan system devices**. Allow the temporary
+   microphone permission to expose the device names; the stream is then released.
+2. Choose the output for Speaker A and Speaker B. Two different local melodies
+   are ready, or choose one music file per speaker (up to 30 MB each).
+3. Tap **Play both together**. Each track has its own volume and stop control.
+4. Record what you actually heard and **Save test report**. Try the other playback
+   method as a separate test if needed.
+
+The default method uses two independent AudioContexts and checks each context's
+`setSinkId` capability at runtime. The alternative uses two HTML audio elements
+and checks their `setSinkId` capability separately. These APIs have different
+browser support; one missing API does not establish that the other is missing.
+Both players prepare before starting together. A requested output failure stops
+the pair; it never silently substitutes a different named output. Unsupported
+methods explicitly offer system output only. Changing to such a method resets
+both output choices with a visible explanation.
+
+Music stays local, requires no account or AI calls, and loops for up to two
+minutes. Hiding the page, changing devices, or leaving the page stops playback.
+The JSON report contains browser capabilities, reported device names and IDs,
+selected files' names, playback status, the latest 200 test events, and a separate user listening result;
+it contains no audio. Browser sink IDs describe the selected browser output,
+not independent physical proof of which speaker emitted sound.
+
+Native concurrent microphone recording/filtering is outside this playback test.
+Reference: [Web Audio output selection](https://developer.chrome.com/blog/audiocontext-setsinkid).
 
 ## Coach response time
 
@@ -85,9 +125,13 @@ does not include the remaining streamed download or device playback.
 
 ## Verification boundaries
 
-Automated tests cover stereo sample isolation, output selection failures,
-unchanged speech text, early first-segment playback, ordered playback,
-prefetch failure, and cancellation. Browser control was unavailable during this
-change. Physical Bluetooth/amplifier routing, mobile autoplay, audible continuity,
-and before/after phone latency still require device testing. No two-second
-response guarantee has been established.
+All 72 automated tests pass, including stereo sample isolation, output selection
+verification, paired preparation/cancellation, independent player control,
+unchanged speech text, early first-segment playback, and prefetch failure.
+Desktop Chrome with a 360-pixel mobile viewport was used to check both playback
+methods starting together, stopping A while B continues, method switching, and
+report download. There was no horizontal overflow or console error in that test.
+This is viewport emulation, not Android hardware validation. Physical
+Bluetooth/amplifier web routing, Android autoplay, audible continuity, and
+before/after phone latency still require device testing. No two-second response
+guarantee has been established.

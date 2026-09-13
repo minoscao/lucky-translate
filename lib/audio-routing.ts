@@ -3,10 +3,13 @@ export type AudioRoute = { inputDeviceId?: string; deviceId: string; channel: Au
 export const DEFAULT_AUDIO_ROUTE: AudioRoute = { deviceId: '', channel: 'both' };
 
 export async function selectSink(audio: HTMLAudioElement, deviceId: string) {
-  if (!deviceId) return;
-  if (typeof audio.setSinkId !== 'function') throw new Error('This browser cannot choose separate speakers. Use the system output or split left / right channels.');
+  if (typeof audio.setSinkId !== 'function') {
+    if (!deviceId) return;
+    throw new Error('This browser cannot choose separate speakers. Use the system output or split left / right channels.');
+  }
   // Never silently send a private translation to another output.
   await audio.setSinkId(deviceId);
+  if (audio.sinkId !== deviceId) throw new Error('The browser did not switch to the selected speaker. Playback was stopped.');
 }
 
 export function channelWav(samples: Float32Array, sampleRate: number, channel: AudioChannel): Blob {

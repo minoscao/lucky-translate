@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import React from 'react';
 import { create, act } from 'react-test-renderer';
 import ts from 'typescript';
-import { discoverAudioDevices } from '../lib/audio-devices.ts';
+import { discoverAudioDevices, namedAudioDevices, audioDeviceName, audioDeviceOptions } from '../lib/audio-devices.ts';
 
 test('system discovery lists named microphones and speakers together and releases the permission microphone', async () => {
   let stops = 0;
@@ -18,8 +18,22 @@ test('system discovery lists named microphones and speakers together and release
       { kind: 'audiooutput', deviceId: 'default' }, { kind: 'videoinput', deviceId: 'camera' },
     ],
   }, true);
-  assert.deepEqual(result.map(device => device.deviceId), ['mic-a', 'mic-b', 'speaker-a', 'speaker-b']);
+  assert.deepEqual(result.map(device => device.deviceId), ['mic-a', 'mic-b', 'speaker-a', 'speaker-b', 'default']);
   assert.equal(stops, 1);
+});
+
+test('device names preserve reported headset models and do not count system aliases as extra speakers', () => {
+  const devices = [
+    { kind: 'audiooutput', deviceId: 'default', label: 'Default — F910 Bluetooth' },
+    { kind: 'audiooutput', deviceId: 'communications', label: 'F910 Bluetooth' },
+    { kind: 'audiooutput', deviceId: 'headset', label: 'F910 Bluetooth' },
+    { kind: 'audiooutput', deviceId: 'amp', label: '' },
+  ];
+  assert.deepEqual(namedAudioDevices(devices, 'audiooutput').map(item => item.deviceId), ['headset', 'amp']);
+  assert.match(audioDeviceName(devices, 'audiooutput'), /F910 Bluetooth/);
+  assert.equal(audioDeviceName(devices, 'audiooutput', 'headset'), 'F910 Bluetooth');
+  assert.match(audioDeviceName(devices, 'audiooutput', 'amp'), /model not reported/);
+  assert.match(audioDeviceOptions(devices, 'audiooutput', 'removed').at(-1).label, /unavailable/);
 });
 
 test('failed enumeration still releases its microphone; hotplug discovery never requests permission again', async () => {

@@ -20,8 +20,13 @@ test('split headset audio has silence in the opposite ear and preserves sample t
 
 test('unavailable or forbidden output never falls back to system speakers', async () => {
   const calls = [];
-  await selectSink({ setSinkId: async id => calls.push(id) }, 'headset-a');
+  const output = { sinkId: '', async setSinkId(id) { calls.push(id); this.sinkId = id; } };
+  await selectSink(output, 'headset-a');
   assert.deepEqual(calls, ['headset-a']);
+  await selectSink(output, '');
+  assert.equal(output.sinkId, '');
+  assert.deepEqual(calls, ['headset-a', '']);
+  await assert.rejects(selectSink({ sinkId: 'wrong-device', setSinkId: async () => {} }, 'headset-a'), /did not switch/);
   await selectSink({}, '');
   await assert.rejects(selectSink({}, 'headset-a'), /cannot choose/);
   await assert.rejects(selectSink({ setSinkId: async () => { throw new Error('device disconnected'); } }, 'headset-a'), /disconnected/);
@@ -39,6 +44,13 @@ test('splitting coach speech keeps every character and only splits at sentence e
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const fakeAudio = () => ({ played: [], src: '', play() { this.played.push(this.src); return Promise.resolve(); }, pause() {}, removeAttribute() {}, load() {}, onended: null, onerror: null });
+
+test('output verification runs after source assignment and blocks playback on a routing failure', async () => {
+  const audio = fakeAudio();
+  await assert.rejects(playAudioSegments({ segments: ['hello'], audio, signal: new AbortController().signal,
+    prepare: async () => new Blob(['audio']), beforePlay: async () => { assert.match(audio.src, /^blob:/); throw new Error('wrong output'); } }), /wrong output/);
+  assert.equal(audio.played.length, 0);
+});
 
 test('first sentence plays before remaining synthesis completes; rest plays once and in order', async () => {
   const first = deferred(), second = deferred(), calls = [], audio = fakeAudio();
