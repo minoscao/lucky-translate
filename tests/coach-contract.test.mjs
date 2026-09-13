@@ -7,7 +7,7 @@ const moduleUrl = source => 'data:text/javascript;base64,' + Buffer.from(ts.tran
 const read = file => readFile(new URL(file, import.meta.url), 'utf8');
 const languageUrl = moduleUrl(await read('../lib/coach-language.ts'));
 const coachUrl = moduleUrl(await read('../lib/coach.ts'));
-const { coachReplyDirect, COACH_RESPONSE_CONTRACT } = await import(coachUrl);
+const { coachReplyDirect, COACH_RESPONSE_CONTRACT, DEFAULT_COACH_SKILL } = await import(coachUrl);
 const configSource = (await read('../lib/server/config.ts')).replace(/^import .*;\r?\n/gm, '');
 const configUrl = moduleUrl(`import {COACH_LANGUAGE_POLICY} from '${languageUrl}'; import {COACH_RESPONSE_CONTRACT,DEFAULT_COACH_SKILL} from '${coachUrl}'; const getDb=()=>({prepare:()=>({first:async()=>globalThis.__contractSkill})});\n${configSource}`);
 const routeSource = (await read('../app/api/coach/route.ts')).replace(/^import .*;\r?\n/gm, '');
@@ -21,6 +21,18 @@ const deepSeekJson=async(account,feature,messages,signal,maxTokens,validate,retr
 };\n${routeSource}`);
 const { POST } = await import(routeUrl);
 const { assertCoachEnglish, COACH_LANGUAGE_POLICY } = await import(languageUrl);
+
+test('the readable skill document matches the active default and survives a backend save without duplicated rules', async () => {
+  const document = (await read('../docs/coach-skill.md')).replace(/\r\n?/g, '\n').trim();
+  assert.equal(document, `${DEFAULT_COACH_SKILL}\n\n${COACH_LANGUAGE_POLICY}`);
+  const { getCoachSkill } = await import(configUrl);
+  try {
+    globalThis.__contractSkill = null;
+    assert.equal(await getCoachSkill(), document);
+    globalThis.__contractSkill = { value: document.replace(/\n/g, '\r\n') };
+    assert.equal(await getCoachSkill(), document);
+  } finally { delete globalThis.__contractSkill; }
+});
 
 test('generated fields allow English, emoji and diagrams but block non-Latin text at every depth', () => {
   assert.doesNotThrow(() => assertCoachEnglish({ reply: "I don't understand that language. Please try again in English. 🙂", tip: 'home --> school', memory: { topics: ['work'] } }));

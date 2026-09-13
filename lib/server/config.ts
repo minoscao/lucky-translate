@@ -35,13 +35,13 @@ export async function deepSeekConfigured() {
 
 export async function getCoachSkill() {
   const row = await getDb().prepare("SELECT value FROM app_config WHERE key = 'coach_skill'").first<{ value: string }>();
-  const skill = (row?.value?.trim().replace(/^You are Luna,/, 'You are Lucky,') || DEFAULT_COACH_SKILL).split(COACH_LANGUAGE_POLICY).join('').trim();
+  const skill = (row?.value?.replace(/\r\n?/g, '\n').trim().replace(/^You are Luna,/, 'You are Lucky,') || DEFAULT_COACH_SKILL).split(COACH_LANGUAGE_POLICY).join('').trim();
   const contracted = skill.includes(COACH_RESPONSE_CONTRACT) ? skill : `${skill}\n\n${COACH_RESPONSE_CONTRACT}`;
   return `${contracted}\n\n${COACH_LANGUAGE_POLICY}`;
 }
 
 export async function setCoachSkill(value: string) {
-  const clean = value.trim();
+  const clean = value.replace(/\r\n?/g, '\n').trim();
   if (clean.length < 200 || clean.length > 20_000) throw new Error('Coach skill 需要在 200 到 20,000 个字符之间');
   await getDb().prepare(`INSERT INTO app_config (key, value, updated_at) VALUES ('coach_skill', ?1, ?2)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).bind(clean, Date.now()).run();
