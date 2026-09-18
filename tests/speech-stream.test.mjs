@@ -99,3 +99,30 @@ test('cancellation stops scheduled speech and no late download can make another 
     assert.equal(fake.contexts[0].sources.length, count); assert.equal(fake.contexts[0].closed, true);
   } finally { player.stop(); cache.clear(); fake.restore(); }
 });
+
+test('suspended mobile audio still reports cloud errors and responds to Stop', async () => {
+  const fake = fakeContext(), Original = globalThis.AudioContext;
+  globalThis.AudioContext = class extends Original { resume() { return new Promise(() => {}); } };
+  try {
+    const controller = new AbortController(), player = new StreamingSpeechPlayer(controller.signal);
+    const error = new Error('Cloud unavailable');
+    await assert.rejects(player.play({ audio: Promise.reject(error), subscribe: () => () => {} }, () => assert.fail()), e => e === error);
+    assert.equal(fake.contexts[0].closed, true);
+    const second = new AbortController(), waiting = new StreamingSpeechPlayer(second.signal);
+    const operation = waiting.play({ audio: new Promise(() => {}), subscribe: () => () => {} }, () => assert.fail());
+    second.abort(); await assert.rejects(operation, { name: 'AbortError' });
+    assert.equal(fake.contexts[1].closed, true);
+  } finally { fake.restore(); }
+});
+
+test('blocked mobile autoplay asks for a tap instead of preparing forever', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const fake = fakeContext(), Original = globalThis.AudioContext;
+  globalThis.AudioContext = class extends Original { resume() { return new Promise(() => {}); } };
+  try {
+    const player = new StreamingSpeechPlayer(new AbortController().signal);
+    const operation = player.play({ audio: new Promise(() => {}), subscribe: () => () => {} }, () => assert.fail());
+    const rejected = assert.rejects(operation, { name: 'NotAllowedError' });
+    context.mock.timers.tick(1500); await rejected; assert.equal(fake.contexts[0].closed, true);
+  } finally { fake.restore(); }
+});

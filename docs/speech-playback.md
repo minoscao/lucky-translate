@@ -1,5 +1,25 @@
 # Speech startup and replay
 
+## Cloud outage recovery (2026-09-18)
+
+The production speech endpoint returned 502 for a short English sentence. Direct
+MeloTTS probes with both `en` and `EN` returned provider HTTP 500 / AiError 3043.
+Text generation was independent and still worked. This confirms a cloud synthesis
+failure, not a diagnosis of the user's speaker hardware.
+
+Coach now tries the device's English speech voice when cloud generation fails
+before a segment starts. It skips cloud attempts for 60 seconds within that
+account workspace, then retries. It preserves sentence order, does not restart
+an already audible segment and respects Stop, logout and account errors. Cloud
+prefetch, caching and normal streaming remain available. No extra cloud provider
+is added, and device playback does not create a cloud cost or token event.
+
+Voice discovery can be asynchronous on mobile. The fallback waits briefly,
+prefers an English local voice and reports missing English voices or playback
+permission problems in English. Device voice availability/quality depends on
+Android's speech settings; this cannot repair the provider's outage. Translator
+output routing is unchanged because device speech cannot select those outputs.
+
 ## Findings
 
 Previously every speaker-button press called `/api/speech` again. Even a reply

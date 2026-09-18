@@ -85,7 +85,12 @@ export class StreamingSpeechPlayer {
     };
     const parser = new WavStream((channels, rate) => { const buffer = this.context.createBuffer(channels.length, channels[0].length, rate); channels.forEach((samples, index) => buffer.getChannelData(index).set(samples)); schedule(buffer); });
     try {
-      await this.resumed;
+      if (this.signal.aborted) throw new DOMException('Playback cancelled', 'AbortError');
+      // Mobile autoplay can leave resume() pending. A cloud error or Stop must
+      // still finish the request; otherwise the device fallback is never reached.
+      const resumeTimeout = setTimeout(() => rejectEnd(new DOMException('Tap the speaker button to allow audio playback.', 'NotAllowedError')), 1500);
+      try { await Promise.race([this.resumed, resource.audio.then(() => this.resumed), ended]); }
+      finally { clearTimeout(resumeTimeout); }
       if (this.signal.aborted) throw new DOMException('Playback cancelled', 'AbortError');
       // Parser errors belong to this playback; they must not poison the shared download.
       unsubscribe = resource.subscribe(chunk => { try { parser.push(chunk); } catch (cause) { rejectEnd(cause); } });

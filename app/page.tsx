@@ -17,6 +17,7 @@ import { synthesizeSpeechDirect } from '@/lib/direct-api';
 import { playAudioSegments } from '@/lib/audio-playback';
 import { SpeechCache } from '@/lib/speech-cache';
 import { StreamingSpeechPlayer } from '@/lib/streaming-speech';
+import { SpeechFallback } from '@/lib/device-speech';
 import { AudioOutputSettings } from '@/components/audio-output-settings';
 import { AudioRoute, DEFAULT_AUDIO_ROUTE, routeAudio, selectSink, speechSegments } from '@/lib/audio-routing';
 import { validEmail, validUsername, validVerificationCode } from '@/lib/auth-inputs';
@@ -257,6 +258,7 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
   const playedCoachSpeech = useRef(0);
   const speechRequest = useRef(0), speechAbort = useRef<AbortController | undefined>(undefined), speechAudio = useRef<HTMLAudioElement | undefined>(undefined), speechUrl = useRef('');
   const streamedSpeech = useRef<StreamingSpeechPlayer | undefined>(undefined);
+  const [speechFallback] = useState(() => new SpeechFallback());
   const { addUsage, setError: reportError } = t;
   const activeAccountId = account?.status === 'active' ? account.id : '';
   const coach = useCoach(scope, t.addUsage, ieltsScore);
@@ -372,15 +374,13 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
           return result.audio;
         });
       if (appMode === 'coach' && typeof AudioContext !== 'undefined') {
-        const player = new StreamingSpeechPlayer(abort.signal, speechSpeed); streamedSpeech.current = player;
-        let next = resource(segments[0]);
-        try {
-          for (let index = 0; index < segments.length; index++) {
-            let following: ReturnType<typeof resource> | undefined;
-            await player.play(next, () => { if (requestId === speechRequest.current) setSpeechPreparing(false); if (index + 1 < segments.length) following = resource(segments[index + 1]); });
-            if (index + 1 < segments.length) next = following || resource(segments[index + 1]);
-          }
-        } finally { player.stop(); if (streamedSpeech.current === player) streamedSpeech.current = undefined; }
+        for (let index = 0; index < segments.length; index++) {
+          await speechFallback.play(segments[index], abort.signal, speechSpeed, async started => {
+            const player = new StreamingSpeechPlayer(abort.signal, speechSpeed); streamedSpeech.current = player;
+            try { await player.play(resource(segments[index]), () => { started(); if (index + 1 < segments.length) resource(segments[index + 1]); }); }
+            finally { player.stop(); if (streamedSpeech.current === player) streamedSpeech.current = undefined; }
+          }, () => { if (requestId === speechRequest.current) setSpeechPreparing(false); });
+        }
       } else {
         const audio = new Audio(); speechAudio.current = audio;
         audio.onplaying = () => { if (requestId === speechRequest.current) setSpeechPreparing(false); };
@@ -394,7 +394,7 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
       const message = cause instanceof Error && cause.name === 'NotAllowedError' ? 'Tap the speaker button to allow audio playback.' : cause instanceof Error ? cause.message : 'Could not play the voice. Please try again.';
       if (appMode === 'coach') setSpeechError(message); else reportError(message);
     }
-  }, [addUsage, reportError, speechSpeed, stopSpeech, appMode, dualAudio, audioRoutes, scope, speechCache]);
+  }, [addUsage, reportError, speechSpeed, stopSpeech, appMode, dualAudio, audioRoutes, scope, speechCache, speechFallback]);
   useEffect(() => {
     const request = t.autoSpeech;
     if (visibleDialog === 'audio' || appMode !== 'translator') { if (request) playedSpeech.current = request.id; return; }
