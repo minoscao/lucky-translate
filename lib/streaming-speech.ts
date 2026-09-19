@@ -7,6 +7,7 @@ export class WavStream {
   private riff = false;
   private data = false;
   private remaining = 0;
+  private openEnded = false;
   private format?: { code: number; channels: number; rate: number; bits: number; align: number };
   unsupported = false;
   emitted = false;
@@ -23,7 +24,8 @@ export class WavStream {
       const name = this.text(0), length = new DataView(this.pending.buffer).getUint32(4, true);
       if (name === 'data') {
         if (!this.format) { this.unsupported = true; return; }
-        this.data = true; this.remaining = length; this.pending = this.pending.slice(8); break;
+        this.data = true; this.openEnded = length === 0x7fff0000 || length === 0xffffffff;
+        this.remaining = this.openEnded ? Infinity : length; this.pending = this.pending.slice(8); break;
       }
       if (length > 65536) { this.unsupported = true; return; }
       if (this.pending.length < 8 + length + (length % 2)) return;
@@ -53,7 +55,7 @@ export class WavStream {
     }
     const consumed = frames * align; this.remaining -= consumed; this.pending = this.pending.slice(consumed); this.emitted = true; this.emit(samples, rate);
   }
-  finish() { this.drain(true); if (this.data && this.remaining > 0) throw new Error('The audio download was incomplete. Please try again.'); }
+  finish() { this.drain(true); if (this.data && (this.openEnded ? !this.emitted || this.pending.length > 0 : this.remaining > 0)) throw new Error('The audio download was incomplete. Please try again.'); }
 }
 
 export class StreamingSpeechPlayer {

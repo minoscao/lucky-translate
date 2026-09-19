@@ -1,3 +1,4 @@
+import { readEventStream } from './event-stream';
 export type CoachRole = 'learner' | 'coach';
 export type CoachMessage = { id: number; role: CoachRole; text: string; createdAt?: number };
 export type CoachMemory = { level: string; topics: string[]; strengths: string[]; focus: string[]; phrases: string[] };
@@ -108,19 +109,29 @@ const memorySchema = {
   },
 };
 
-async function coachRequest<T>(_key: string, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, _schemaName: string, _schema: object, signal: AbortSignal): Promise<{ data: T; usage: CoachUsage }> {
+async function coachRequest<T>(_key: string, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, _schemaName: string, _schema: object, signal: AbortSignal, onReply?: (reply: string) => void): Promise<{ data: T; usage: CoachUsage }> {
   let response: Response;
   try {
     response = await fetch('/api/coach', {
       method: 'POST', credentials: 'same-origin', signal, headers: { 'Content-Type': 'application/json', 'X-Lucky-Account': _key },
-      body: JSON.stringify({ messages: messages.map((message, index) => index === 0 ? { ...message, content: `${message.content}\n\nRequired JSON response schema: ${JSON.stringify(_schema)}` } : message), maxTokens: 1800 }),
+      body: JSON.stringify({ messages: messages.map((message, index) => index === 0 ? { ...message, content: `${message.content}\n\nRequired JSON response schema: ${JSON.stringify(_schema)}` } : message), maxTokens: 1800, stream: Boolean(onReply) }),
     });
   } catch { throw new Error('Could not connect to English Coach. Please check your connection.'); }
   if (!response.ok) {
     const detail = await response.json().catch(() => null) as { error?: string } | null;
     throw new Error(detail?.error || 'English Coach is unavailable. Please try again.');
   }
-  const result = await response.json() as { content?: string; usage?: CoachUsage };
+  let result: { content?: string; usage?: CoachUsage } | undefined;
+  if (response.headers.get('content-type')?.includes('text/event-stream')) {
+    await readEventStream(response, data => {
+      if (signal.aborted) throw new DOMException('Request cancelled', 'AbortError');
+      const event = JSON.parse(data);
+      if (event.type === 'error') throw new Error(event.error || 'English Coach could not finish the reply.');
+      if (event.type === 'reply' && typeof event.reply === 'string') onReply?.(event.reply);
+      if (event.type === 'result') result = event;
+    });
+  } else result = await response.json();
+  if (!result) throw new Error('The reply was interrupted. Please try again.');
   const content = result.content;
   if (!content) throw new Error('English Coach could not finish the reply.');
   const clean = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
@@ -129,7 +140,7 @@ async function coachRequest<T>(_key: string, messages: Array<{ role: 'system' | 
   catch { throw new Error('The reply was incomplete. Please try again.'); }
 }
 
-export async function coachReplyDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; turnStatus: string; newSession?: boolean; signal: AbortSignal }) {
+export async function coachReplyDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; turnStatus: string; newSession?: boolean; signal: AbortSignal; onReply?: (reply: string) => void }) {
   const schema = {
     type: 'object', additionalProperties: false, required: ['reply', 'tip', 'memory'],
     properties: { reply: { type: 'string' }, tip: { type: 'string' }, memory: memorySchema },
@@ -139,7 +150,7 @@ export async function coachReplyDirect(input: { key: string; history: CoachMessa
   const task = input.newSession
     ? `Start a fresh ordinary open conversation. Do not announce a level or lesson. Learner memory: ${JSON.stringify(input.memory)}`
     : `Private learner memory: ${JSON.stringify(input.memory)}\nLearner-turn signal: ${input.turnStatus}. Respond to the learner's latest message.`;
-  return coachRequest<{ reply: string; tip: string; memory: CoachMemory }>(input.key, [{ role: 'system', content: DEFAULT_COACH_SKILL }, ...history, { role: 'user', content: task }], 'lucky_coach_turn', schema, input.signal);
+  return coachRequest<{ reply: string; tip: string; memory: CoachMemory }>(input.key, [{ role: 'system', content: DEFAULT_COACH_SKILL }, ...history, { role: 'user', content: task }], 'lucky_coach_turn', schema, input.signal, input.onReply);
 }
 
 export async function coachPracticeDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; signal: AbortSignal }) {

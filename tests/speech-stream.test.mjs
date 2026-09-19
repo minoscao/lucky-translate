@@ -45,6 +45,16 @@ test('WAV parser emits audio before full download and preserves sample values ac
   const other = new WavStream(() => assert.fail('unknown formats must not emit guessed samples')); other.push(new Uint8Array(100)); assert.equal(other.unsupported, true);
 });
 
+test('cloud streaming WAV with an unknown length ends cleanly but rejects partial sample frames', async () => {
+  const bytes = new Uint8Array(await channelWav(new Float32Array(4800).fill(.2), 24000, 'both').arrayBuffer());
+  const view = new DataView(bytes.buffer); view.setUint32(40, 0x7fff0000, true);
+  let frames = 0;
+  const parser = new WavStream(channels => { frames += channels[0].length; });
+  for (let i = 0; i < bytes.length; i += 193) parser.push(bytes.slice(i, i + 193));
+  parser.finish(); assert.equal(frames, 4800);
+  const broken = new WavStream(() => {}); broken.push(bytes.slice(0, -1)); assert.throws(() => broken.finish(), /incomplete/);
+});
+
 test('streaming accepts float32 WAV with extension bytes and a fact chunk', () => {
   const buffer = Buffer.alloc(58 + 8000 * 4); buffer.write('RIFF'); buffer.writeUInt32LE(buffer.length - 8, 4); buffer.write('WAVE', 8); buffer.write('fmt ', 12); buffer.writeUInt32LE(18, 16);
   buffer.writeUInt16LE(3, 20); buffer.writeUInt16LE(1, 22); buffer.writeUInt32LE(8000, 24); buffer.writeUInt32LE(32000, 28); buffer.writeUInt16LE(4, 32); buffer.writeUInt16LE(32, 34);

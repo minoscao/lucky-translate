@@ -53,3 +53,21 @@ test('switching A to an empty B resets coach memory and ignores A reply completi
     if(renderer)await act(async()=>renderer.unmount());globalThis.fetch=oldFetch;delete globalThis.localStorage;delete globalThis.__coachReply;
   }
 });
+
+test('a streamed reply appears and speaks before final memory without a duplicate message or replay', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  let current, renderer, resolveReply, preview, pending;
+  const scope = { owner: 'stream-test', active: true, storage: { getItem: () => null, setItem() {} }, save: async () => {}, request: async () => ({ records: [], account: { usage: { todayTrainingSeconds: 0, totalTrainingSeconds: 0 } } }) };
+  globalThis.__coachReply = input => { preview = input.onReply; return new Promise(resolve => { resolveReply = resolve; }); };
+  function Harness() { current = coach.useCoach(scope, () => {}); return null; }
+  try {
+    await act(async () => { renderer = create(React.createElement(Harness)); });
+    await act(async () => { pending = current.sendText('How are you?'); });
+    await act(async () => preview('I am well!'));
+    assert.equal(current.history.at(-1).text, 'I am well!'); assert.equal(current.busy, true);
+    const speech = current.speechRequest, id = current.history.at(-1).id;
+    await act(async () => { resolveReply({ data: { reply: 'I am well!', tip: '', memory: { level: 'learning', topics: ['work'] } }, usage: { tokens: 10, cost: 0 } }); await pending; });
+    assert.equal(current.history.length, 2); assert.equal(current.history.at(-1).id, id); assert.equal(current.speechRequest, speech);
+    assert.deepEqual(current.memory.topics, ['work']); assert.equal(current.busy, false);
+  } finally { if (renderer) await act(async () => renderer.unmount()); delete globalThis.__coachReply; }
+});

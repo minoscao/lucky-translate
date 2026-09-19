@@ -37,7 +37,8 @@ test('oversized streamed or declared uploads return the same explicit time limit
 });
 
 test('a long latest learner message reaches Coach without losing its final sentence', async () => {
-  const oldFetch = globalThis.fetch, { coachReplyDirect, EMPTY_COACH_MEMORY } = await import(moduleUrl(compile(await readFile(new URL('../lib/coach.ts', import.meta.url), 'utf8'))));
+  const eventsUrl = moduleUrl(compile(await readFile(new URL('../lib/event-stream.ts', import.meta.url), 'utf8')));
+  const oldFetch = globalThis.fetch, { coachReplyDirect, EMPTY_COACH_MEMORY } = await import(moduleUrl(compile((await readFile(new URL('../lib/coach.ts', import.meta.url), 'utf8')).replace("'./event-stream'", JSON.stringify(eventsUrl)))));
   const text = 'This is part of my longer story. '.repeat(90) + 'My final question is about tomorrow.';
   let request;
   globalThis.fetch = async (_, init) => { request = JSON.parse(init.body); return Response.json({ content: JSON.stringify({ reply: 'I heard your full story.', tip: '', memory: EMPTY_COACH_MEMORY }) }); };

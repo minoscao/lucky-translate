@@ -93,15 +93,20 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
   const requestReply = useCallback(async (messages: CoachMessage[], nextMemory: CoachMemory, turnStatus: string, newSession = false) => {
     if (!cloudReady.current || !scope.active) return false;
     abort.current?.abort(); const controller = new AbortController(); abort.current = controller; setBusyState(true); setError(''); setTip('');
+    let earlyMessage: CoachMessage | undefined;
     try {
-      const result = await coachReplyDirect({ key: keyRef.current, history: messages, memory: nextMemory, turnStatus, newSession, signal: controller.signal });
+      const result = await coachReplyDirect({ key: keyRef.current, history: messages, memory: nextMemory, turnStatus, newSession, signal: controller.signal, onReply: reply => {
+        if (earlyMessage || controller.signal.aborted || !scope.active) return;
+        earlyMessage = { id: (messageId.current = Math.max(Date.now() * 1000 + Math.floor(Math.random() * 1000), messageId.current + 1)), createdAt: Date.now(), role: 'coach', text: reply };
+        updateHistory([...messages, earlyMessage]); setSpeechRequest({ id: ++speechId.current, text: reply });
+      } });
       if (controller.signal.aborted || !scope.active) return false;
       const reply = result.data.reply.trim(); if (!reply) throw new Error('English Coach did not return a reply.');
       const responseMemory = result.data.memory;
       const updatedMemory = responseMemory && typeof responseMemory === 'object' && !Array.isArray(responseMemory) ? cleanMemory({ ...nextMemory, ...Object.fromEntries(Object.entries(responseMemory).filter(([key, value]) => key === 'level' ? typeof value === 'string' : ['topics', 'strengths', 'focus', 'phrases'].includes(key) && Array.isArray(value))) }) : nextMemory;
-      const updated = [...messages, { id: (messageId.current = Math.max(Date.now() * 1000 + Math.floor(Math.random() * 1000), messageId.current + 1)), createdAt: Date.now(), role: 'coach' as const, text: reply }];
+      const updated = [...messages, earlyMessage ? { ...earlyMessage, text: reply } : { id: (messageId.current = Math.max(Date.now() * 1000 + Math.floor(Math.random() * 1000), messageId.current + 1)), createdAt: Date.now(), role: 'coach' as const, text: reply }];
       updateHistory(updated); updateMemory(updatedMemory); setTip(typeof result.data.tip === 'string' ? result.data.tip.trim() : ''); saveSession(updated, updatedMemory); applyUsage(result.usage);
-      setSpeechRequest({ id: ++speechId.current, text: reply }); return true;
+      if (!earlyMessage) setSpeechRequest({ id: ++speechId.current, text: reply }); return true;
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'English Coach is unavailable. Please try again.'); return false; }
     finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
   }, []);
