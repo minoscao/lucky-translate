@@ -11,6 +11,9 @@ const strip = source => source.replace(/^import[\s\S]*?from ['"][^'"]+['"];\s*/g
 const scopeModule=await import(url(strip(compile(await read('../lib/account-scope.ts')))));
 const coach=await import(url(`import {useEffect,useRef,useState,useCallback} from '${import.meta.resolve('react')}';
 import {COACH_RECORDING} from '${new URL('../lib/recording-limits.ts', import.meta.url).href}';
+const validCorrection=()=>undefined;
+const coachDailySummaryDirect=input=>globalThis.__dailyReply(input);
+const coachWeeklySummaryDirect=input=>globalThis.__weeklyReply(input);
 const EMPTY_COACH_MEMORY={level:'discovering',topics:[],strengths:[],focus:[],phrases:[]};
 class VoiceRecorder {async stop(){} async start(){return true;}}
 const coachReplyDirect=input=>globalThis.__coachReply(input);
@@ -70,4 +73,15 @@ test('a streamed reply appears and speaks before final memory without a duplicat
     assert.equal(current.history.length, 2); assert.equal(current.history.at(-1).id, id); assert.equal(current.speechRequest, speech);
     assert.deepEqual(current.memory.topics, ['work']); assert.equal(current.busy, false);
   } finally { if (renderer) await act(async () => renderer.unmount()); delete globalThis.__coachReply; }
+});
+
+test('today recap is saved and returned even while old-week consolidation fails', async()=>{
+ globalThis.IS_REACT_ACT_ENVIRONMENT=true;let current,renderer,rejectArchive;
+ const old={id:'day-2020-01-01',date:'2020-01-01',minutes:3,overview:'Old practice',mainFocus:[],likelyMistakes:[],vocabulary:[],grammar:[]};
+ const daily={overview:'Today practice',mainFocus:[],likelyMistakes:[],vocabulary:[],grammar:[]};const writes=[];
+ const scope={owner:'recap-test',active:true,storage:{setItem(){},getItem(){return null;}},save:async(...args)=>writes.push(args),request:async()=>({records:[{id:'coach-state',data:{history:[{id:1,role:'learner',text:'I work here.'}]}},{id:'coach-journal',data:{todayDate:'2020-01-01',todaySeconds:0,daily:[old],weekly:[]}}],account:{usage:{todayTrainingSeconds:60,totalTrainingSeconds:240}}})};
+ globalThis.__dailyReply=async()=>({data:daily,usage:{tokens:20,cost:0}});globalThis.__weeklyReply=()=>new Promise((_,reject)=>{rejectArchive=reject;});
+ function Harness(){current=coach.useCoach(scope,()=>{});return null;}
+ try{await act(async()=>{renderer=create(React.createElement(Harness));});let report;await act(async()=>{report=await current.summarizeToday();});assert.equal(report.overview,'Today practice');assert.equal(current.busy,false);assert.equal(current.dailySummaries.length,2);await act(async()=>{rejectArchive(new Error('archive failure'));});assert.equal(current.error,'');assert.equal(current.dailySummaries.length,2);assert.ok(writes.some(args=>args[0]==='coach-journal'&&args[2].daily.some(item=>item.overview==='Today practice')));}
+ finally{if(renderer)await act(async()=>renderer.unmount());delete globalThis.__dailyReply;delete globalThis.__weeklyReply;}
 });

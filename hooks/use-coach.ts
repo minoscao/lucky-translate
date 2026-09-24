@@ -6,6 +6,7 @@ import {
   coachDailySummaryDirect, coachPracticeDirect, coachReplyDirect, coachWeeklySummaryDirect,
   CoachDailySummary, CoachExercise, CoachLevelAssessment, CoachMemory, CoachMessage, CoachWeeklySummary, CoachUsage, EMPTY_COACH_MEMORY, coachLevelAssessmentDirect,
 } from '@/lib/coach';
+import { validCorrection } from '@/lib/coach-corrections';
 import { transcribeDirect } from '@/lib/direct-api';
 import { VoiceRecorder } from '@/lib/voice-recorder';
 import { AccountSnapshot } from '@/lib/account';
@@ -40,7 +41,10 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
   const [practice, setPractice] = useState<{ title: string; exercises: CoachExercise[] }>(), [speechRequest, setSpeechRequest] = useState<{ id: number; text: string }>();
   const [journal, setJournal] = useState<CoachJournal>(emptyJournal);
   const [recordingSeconds, setRecordingSeconds] = useState(0), [recordingNotice, setRecordingNotice] = useState('');
+  const [conversationMode, setConversationMode] = useState(false), [userSpeaking, setUserSpeaking] = useState(false);
+  const conversationRef = useRef(false), interruptPlayback = useRef<(() => void) | undefined>(undefined);
   const cancelAtLimit = useRef(false);
+  const archiveAbort = useRef<AbortController | undefined>(undefined);
   const recorder = useRef<VoiceRecorder | undefined>(undefined), abort = useRef<AbortController | undefined>(undefined), keyRef = useRef(scope.owner), usageRef = useRef(addUsage), ieltsScoreRef = useRef(ieltsScore);
   const historyRef = useRef<CoachMessage[]>([]), memoryRef = useRef<CoachMemory>(EMPTY_COACH_MEMORY), busyRef = useRef(false), recordingRef = useRef(false), journalRef = useRef<CoachJournal>(emptyJournal());
   const cloudReady = useRef(false);
@@ -104,7 +108,8 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
       const reply = result.data.reply.trim(); if (!reply) throw new Error('English Coach did not return a reply.');
       const responseMemory = result.data.memory;
       const updatedMemory = responseMemory && typeof responseMemory === 'object' && !Array.isArray(responseMemory) ? cleanMemory({ ...nextMemory, ...Object.fromEntries(Object.entries(responseMemory).filter(([key, value]) => key === 'level' ? typeof value === 'string' : ['topics', 'strengths', 'focus', 'phrases'].includes(key) && Array.isArray(value))) }) : nextMemory;
-      const updated = [...messages, earlyMessage ? { ...earlyMessage, text: reply } : { id: (messageId.current = Math.max(Date.now() * 1000 + Math.floor(Math.random() * 1000), messageId.current + 1)), createdAt: Date.now(), role: 'coach' as const, text: reply }];
+      const correction = validCorrection(result.data.correction, messages.filter(item => item.role === 'learner').at(-1)?.text || '', reply);
+      const updated = [...messages, earlyMessage ? { ...earlyMessage, text: reply, correction } : { id: (messageId.current = Math.max(Date.now() * 1000 + Math.floor(Math.random() * 1000), messageId.current + 1)), createdAt: Date.now(), role: 'coach' as const, text: reply, correction }];
       updateHistory(updated); updateMemory(updatedMemory); setTip(typeof result.data.tip === 'string' ? result.data.tip.trim() : ''); saveSession(updated, updatedMemory); applyUsage(result.usage);
       if (!earlyMessage) setSpeechRequest({ id: ++speechId.current, text: reply }); return true;
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'English Coach is unavailable. Please try again.'); return false; }
@@ -124,17 +129,22 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
   useEffect(() => {
     const current = new VoiceRecorder({
       onSentence: audio => {
-        if (busyRef.current) return;
+        if (busyRef.current || !scope.active) return;
+        setUserSpeaking(false);
         const controller = new AbortController(); abort.current = controller; setBusyState(true); setError('');
         void transcribeDirect(audio, keyRef.current, controller.signal).then(result => {
           if (controller.signal.aborted || !scope.active) return false;
           applyUsage(result.usage);
-          if (!result.text) { setError('I could not catch that. Please try again.'); return false; }
+          if (!result.text) { if (!conversationRef.current) setError('I could not catch that. Please try again.'); return false; }
           if (abort.current === controller) { abort.current = undefined; setBusyState(false); }
           return submitLearner(result.text, true);
         }).catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not recognize your speech. Please try again.'); })
           .finally(() => { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } });
-      }, onLevel: () => {}, onError: message => { setError(message); setRecordingState(false); void current.stop(false); },
+      }, onSpeechStart: () => {
+        if (!conversationRef.current || !scope.active) return;
+        abort.current?.abort(); abort.current = undefined; setBusyState(false); setSpeechRequest(undefined);
+        interruptPlayback.current?.(); setUserSpeaking(true); setError('');
+      }, onLevel: () => {}, onError: message => { setError(message); conversationRef.current = false; setConversationMode(false); setUserSpeaking(false); setRecordingState(false); void current.stop(false); },
       onProgress: seconds => { if (scope.active && recordingRef.current) setRecordingSeconds(seconds); },
       onLimit: () => {
         if (!scope.active || !recordingRef.current) return;
@@ -145,7 +155,7 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
       },
     });
     recorder.current = current;
-    return () => { abort.current?.abort(); void current.stop(false); };
+    return () => { abort.current?.abort(); archiveAbort.current?.abort(); void current.stop(false); };
   }, [submitLearner]);
 
   const beginSession = useCallback(async () => { abort.current?.abort(); setPractice(undefined); updateHistory([]); setTip(''); return requestReply([], memoryRef.current, 'new session', true); }, [requestReply]);
@@ -156,7 +166,38 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
     if (attempt !== recordingAttempt.current || !scope.active) return false;
     setRecordingState(Boolean(started)); return Boolean(started);
   }, []);
-  const stopRecording = useCallback(async (commit = true) => { recordingAttempt.current++; setRecordingState(false); await recorder.current?.stop(commit); }, []);
+  const stopRecording = useCallback(async (commit = true) => {
+    recordingAttempt.current++;
+    const wasConversation = conversationRef.current;
+    conversationRef.current = false; setConversationMode(false); setUserSpeaking(false); setRecordingState(false);
+    if (wasConversation) { abort.current?.abort(); abort.current = undefined; setBusyState(false); setSpeechRequest(undefined); interruptPlayback.current?.(); }
+    await recorder.current?.stop(wasConversation ? false : commit);
+  }, []);
+  const startConversation = useCallback(async () => {
+    if (!cloudReady.current || !scope.active || conversationRef.current) return false;
+    const stopped = stopRecording(false);
+    const attempt = ++recordingAttempt.current;
+    abort.current?.abort(); abort.current = undefined; setBusyState(false); setSpeechRequest(undefined); interruptPlayback.current?.();
+    conversationRef.current = true; setConversationMode(true); setRecordingState(true); setError(''); setRecordingNotice('');
+    await stopped;
+    if (attempt !== recordingAttempt.current || !scope.active) return false;
+    try {
+      const started = await recorder.current?.start('continuous', false, '', 0, true);
+      if (attempt !== recordingAttempt.current || !scope.active) return false;
+      if (!started) await stopRecording(false);
+      return Boolean(started);
+    } catch (cause) {
+      if (attempt === recordingAttempt.current && scope.active) { setError(cause instanceof Error ? cause.message : 'Could not start the microphone.'); await stopRecording(false); }
+      return false;
+    }
+  }, [scope, stopRecording]);
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const hide = () => { if (document.hidden) void stopRecording(false); };
+    const leave = () => { void stopRecording(false); };
+    document.addEventListener('visibilitychange', hide); window.addEventListener('pagehide', leave);
+    return () => { document.removeEventListener('visibilitychange', hide); window.removeEventListener('pagehide', leave); };
+  }, [stopRecording]);
   const createPractice = useCallback(async () => {
     if (!cloudReady.current || !scope.active || busyRef.current) return false;
     const controller = new AbortController(); abort.current = controller; setBusyState(true); setError('');
@@ -174,19 +215,27 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
       if (controller.signal.aborted || !scope.active) return undefined;
       applyUsage(result.usage);
       const report: CoachDailySummary = { id: `day-${today}`, date: today, minutes: Math.max(1, Math.round(current.todaySeconds / 60)), ...result.data };
-      let next: CoachJournal = { ...current, daily: [...current.daily.filter(item => item.date !== today), report].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 14) };
-      const oldStarts = [...new Set(next.daily.map(item => weekStart(item.date)).filter(start => start < weekStart(today)))].sort();
-      for (const start of oldStarts) {
-        const days = next.daily.filter(item => weekStart(item.date) === start); if (!days.length) continue;
-        const weekly = await coachWeeklySummaryDirect({ key: keyRef.current, daily: days, signal: controller.signal }); if (controller.signal.aborted || !scope.active) return undefined; applyUsage(weekly.usage);
-        const archive: CoachWeeklySummary = { id: `week-${start}`, startDate: start, endDate: weekEnd(start), minutes: days.reduce((sum, item) => sum + item.minutes, 0), ...weekly.data };
-        next = { ...next, daily: next.daily.filter(item => weekStart(item.date) !== start), weekly: [...next.weekly.filter(item => item.startDate !== start), archive].sort((a, b) => b.startDate.localeCompare(a.startDate)).slice(0, 52) };
+      const next: CoachJournal = { ...current, daily: [...current.daily.filter(item => item.date !== today), report].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 14) };
+      saveJournal({ ...next, todaySeconds: journalRef.current.todaySeconds, totalSeconds: journalRef.current.totalSeconds });
+      archiveAbort.current?.abort();
+      const background = new AbortController(); archiveAbort.current = background;
+      const start = [...new Set(next.daily.map(item => weekStart(item.date)).filter(value => value < weekStart(today)))].sort()[0];
+      if (start) {
+        const days = next.daily.filter(item => weekStart(item.date) === start);
+        void coachWeeklySummaryDirect({ key: keyRef.current, daily: days, signal: background.signal }).then(weekly => {
+          if (background.signal.aborted || !scope.active) return;
+          applyUsage(weekly.usage);
+          const currentJournal = journalRef.current;
+          if (!days.every(day => currentJournal.daily.some(item => JSON.stringify(item) === JSON.stringify(day)))) return;
+          const archive: CoachWeeklySummary = { ...weekly.data, id: `week-${start}`, startDate: start, endDate: weekEnd(start), minutes: days.reduce((sum, item) => sum + item.minutes, 0) };
+          saveJournal({ ...currentJournal, daily: currentJournal.daily.filter(item => !days.some(day => day.id === item.id)), weekly: [...currentJournal.weekly.filter(item => item.startDate !== start), archive].sort((a, b) => b.startDate.localeCompare(a.startDate)).slice(0, 52) });
+        }).catch(() => { /* Keep daily recalls for the next consolidation attempt. */ });
       }
-      saveJournal({ ...next, todaySeconds: journalRef.current.todaySeconds, totalSeconds: journalRef.current.totalSeconds }); return report;
+      return report;
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not prepare your recap.'); return undefined; }
     finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
   }, [saveJournal]);
-  const clearSession = useCallback(() => { abort.current?.abort(); void recorder.current?.stop(false); setRecordingState(false); updateHistory([]); setPractice(undefined); setTip(''); setError(''); saveSession([], memoryRef.current); }, []);
+  const clearSession = useCallback(() => { abort.current?.abort(); void stopRecording(false); setRecordingState(false); updateHistory([]); setPractice(undefined); setTip(''); setError(''); saveSession([], memoryRef.current); }, []);
   const evaluateLevel = useCallback(async () => {
     if (!cloudReady.current || !scope.active || busyRef.current || totalPracticeSeconds(journalRef.current) < 7200 || journalRef.current.assessment) return undefined;
     const controller = new AbortController(); abort.current = controller; setBusyState(true); setError('');
@@ -199,7 +248,11 @@ export function useCoach(scope: AccountScope, addUsage: UsageHandler, ieltsScore
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not complete your assessment.'); return undefined; }
     finally { if (abort.current === controller) { abort.current = undefined; setBusyState(false); } }
   }, [saveJournal]);
+  const setVoicePlayback = useCallback((active: boolean) => recorder.current?.setPlayback(active), []);
+  const setVoiceInterrupt = useCallback((callback?: () => void) => { interruptPlayback.current = callback; }, []);
   return {
+    conversationMode, userSpeaking, startConversation,
+    setVoicePlayback, setVoiceInterrupt,
     ready, cancel: () => { abort.current?.abort(); void stopRecording(false); },
     history, memory, busy, recording, recordingSeconds, recordingNotice, recordingLimit: COACH_RECORDING.maxSeconds, recordingWarning: COACH_RECORDING.warningSeconds,
     setRecordingCancelled: (value: boolean) => { cancelAtLimit.current = value; }, error, tip, practice, speechRequest,

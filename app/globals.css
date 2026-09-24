@@ -683,3 +683,10 @@ button, a { transition: background var(--motion), color var(--motion), opacity v
 @media (max-width: 600px) { .audio-test-channels { grid-template-columns: minmax(0, 1fr); } }
 .audio-input-test { display: grid; gap: 8px; }
 .audio-input-test meter { width: 100%; height: 20px; }
+
+.correction-original { color: #ffadad; background: transparent; text-decoration: underline wavy; text-underline-offset: 4px; }
+.correction-fixed { color: #88e6b7; background: transparent; text-decoration: underline; text-underline-offset: 4px; }
+
+.conversation-status { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; margin: 8px 0; }
+.conversation-status small { color: var(--muted-foreground); }
+.voice-mode-start { min-height: 44px; }

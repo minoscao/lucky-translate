@@ -9,8 +9,12 @@ class LuckyVoice extends AudioWorkletProcessor {
     this.phase = 0; this.resampleSum = 0; this.resampleCount = 0;
     this.pitchFrames = 0; this.speakerPitch = 0; this.changeCandidate = 0;
     this.elapsedFrames = 0; this.maxFrames = Infinity; this.progressSecond = -1;
+    this.conversation = false; this.playback = false; this.noiseFloor = .002;
+    this.candidateSeconds = 0; this.speechStarted = false;
     this.port.onmessage = ({ data }) => {
       if (data.type === 'config') { this.autoSilenceSeconds = data.mode === 'continuous' ? 5 : Infinity; this.detectSpeaker = data.mode === 'continuous' && data.detectSpeaker !== false; this.maxFrames = data.maxSeconds > 0 ? Math.floor(data.maxSeconds * sampleRate) : Infinity; }
+      if (data.type === 'config' && data.conversation) { this.conversation = true; this.autoSilenceSeconds = .95; this.pre = new Int16Array(8000); }
+      if (data.type === 'playback') this.playback = Boolean(data.active);
       if (data.type === 'flush') { this.emit('stop'); this.active = false; this.port.postMessage({ type: 'flushed' }); }
     };
   }
@@ -77,6 +81,7 @@ class LuckyVoice extends AudioWorkletProcessor {
       this.port.postMessage({ type: 'sentence', wav: buffer, boundary: reason }, [buffer]);
     }
     this.size = 0; this.silenceSeconds = 0; this.voiced = 0; this.preSize = 0;
+    this.candidateSeconds = 0; this.speechStarted = false;
     this.freshSegment = reason === 'silence'; this.pitchFrames = 0;
   }
   process(inputs) {
@@ -87,7 +92,25 @@ class LuckyVoice extends AudioWorkletProcessor {
     if (seconds !== this.progressSecond) { this.progressSecond = seconds; this.port.postMessage({ type: 'progress', seconds }); }
     if (this.elapsedFrames >= this.maxFrames) { this.active = false; this.port.postMessage({ type: 'limit' }); }
     let sum = 0; for (const value of input) sum += value * value;
-    const rms = Math.sqrt(sum / input.length), voice = rms >= .008, chunk = this.downsample(input);
+    const rms = Math.sqrt(sum / input.length), chunk = this.downsample(input);
+    let voice = rms >= .008;
+    if (this.conversation) {
+      let crossings = 0;
+      for (let i = 1; i < input.length; i++) if ((input[i] >= 0) !== (input[i - 1] >= 0)) crossings++;
+      const threshold = Math.max(this.playback ? .018 : .009, this.noiseFloor * (this.playback ? 4 : 3));
+      voice = rms >= threshold && crossings / input.length < .35;
+      if (!this.speechStarted) {
+        this.keepPre(chunk);
+        if (!voice) this.noiseFloor = .995 * this.noiseFloor + .005 * Math.min(rms, .015);
+        this.candidateSeconds = voice ? this.candidateSeconds + input.length / sampleRate : Math.max(0, this.candidateSeconds - input.length / sampleRate * 2);
+        if (this.candidateSeconds < (this.playback ? .24 : .18)) return true;
+        this.speechStarted = true;
+        this.append(this.pre.subarray(0, this.preSize)); this.preSize = 0;
+        this.voiced = Math.round(this.candidateSeconds * 16000);
+        this.port.postMessage({ type: 'speech-start' });
+        return true;
+      }
+    }
     this.tick += input.length;
     if (this.tick >= sampleRate / 10) { this.tick = 0; this.port.postMessage({ type: 'level', level: Math.min(1, rms * 14) }); }
     if (!this.size && !voice) { this.keepPre(chunk); return true; }
@@ -96,6 +119,8 @@ class LuckyVoice extends AudioWorkletProcessor {
     if (voice) { this.voiced += chunk.length; this.silenceSeconds = 0; this.checkSpeaker(); }
     else this.silenceSeconds += input.length / sampleRate;
     if (this.silenceSeconds >= this.autoSilenceSeconds) this.emit('silence');
+    // Bound each upload, while keeping the microphone open for the next turn.
+    if (this.conversation && this.size >= 16000 * 110) this.emit('silence');
     return true;
   }
 }

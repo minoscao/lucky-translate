@@ -16,10 +16,12 @@ type Props = {
   limitSeconds?: number;
   warningSeconds?: number;
   onCancelChange?: (cancelled: boolean) => void;
+  onConversation?: () => void;
 };
 
-export function RecordButton({ recording, busy = false, disabled = false, onStart, onStop, holdMs = 350, cancelDistance = 64, elapsedSeconds = 0, limitSeconds, warningSeconds = 10, onCancelChange }: Props) {
+export function RecordButton({ recording, busy = false, disabled = false, onStart, onStop, holdMs = 350, cancelDistance = 64, elapsedSeconds = 0, limitSeconds, warningSeconds = 10, onCancelChange, onConversation }: Props) {
   const press = useRef<{ id: number; y: number; started: number; cancel: boolean } | undefined>(undefined);
+  const lastTap = useRef(-Infinity);
   const [gesture, setGesture] = useState<'idle' | 'holding' | 'cancel'>('idle');
   useEffect(() => { if (!recording) { press.current = undefined; setGesture('idle'); } }, [recording]);
   const remaining = Math.max(0, (limitSeconds || 0) - elapsedSeconds), warning = recording && Boolean(limitSeconds) && remaining <= warningSeconds;
@@ -28,6 +30,10 @@ export function RecordButton({ recording, busy = false, disabled = false, onStar
   const down = (event: PointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0 || event.isPrimary === false || press.current || busy || disabled) return;
     event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
+    if (onConversation && performance.now() - lastTap.current < 320) {
+      lastTap.current = -Infinity; press.current = undefined; setGesture('idle'); onConversation(); return;
+    }
+    lastTap.current = -Infinity;
     if (recording) { stop(true); return; }
     const current = { id: event.pointerId, y: event.clientY, started: performance.now(), cancel: false };
     press.current = current; setGesture('holding'); onCancelChange?.(false);
@@ -43,7 +49,7 @@ export function RecordButton({ recording, busy = false, disabled = false, onStar
     const current = press.current; if (current?.id !== event.pointerId) return;
     const cancel = current.y - event.clientY >= cancelDistance;
     if (cancel || performance.now() - current.started >= holdMs) stop(!cancel);
-    else { press.current = undefined; setGesture('idle'); }
+    else { lastTap.current = performance.now(); press.current = undefined; setGesture('idle'); }
   };
   const cancelPointer = (event: PointerEvent<HTMLButtonElement>) => { if (press.current?.id === event.pointerId) stop(false); };
   const feedback = gesture === 'cancel' ? 'Release to cancel' : gesture === 'holding' ? 'Release to send · Slide up to cancel' : 'Recording · Tap to send';

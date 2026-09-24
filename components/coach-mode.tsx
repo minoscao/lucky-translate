@@ -9,11 +9,12 @@ import { CoachDailySummary, CoachWeeklySummary } from '@/lib/coach';
 import { RecordButton } from '@/components/record-button';
 import { CoachPet } from '@/components/coach-pet';
 import { HighlightedText } from '@/components/highlighted-text';
+import { CorrectedText } from '@/components/corrected-text';
 import { grammarHighlights } from '@/lib/text-highlights';
 
 type CoachController = ReturnType<typeof useCoach>;
 type Props = { coach: CoachController; speaking: boolean; playbackPending?: boolean; playbackError?: string; ieltsScore?: number; initialStage?: 'chat' | 'dashboard'; onBack: () => void; onSettings: () => void; onIelts: () => void; onSecurity: () => void; onLogout: () => void; onHowItWorks: () => void; onStopSpeech: () => void; onSpeak: (text: string) => void };
-type Stage = 'chat' | 'paused' | 'summarizing' | 'summary' | 'dashboard' | 'practice' | 'done';
+type Stage = 'chat' | 'paused' | 'summarizing' | 'recap-error' | 'summary' | 'dashboard' | 'practice' | 'done';
 
 function RecallTables({ report }: { report: CoachDailySummary | CoachWeeklySummary }) {
   const daily = 'mainFocus' in report ? report : undefined, weekly = 'progress' in report ? report : undefined, confirmedMistakes = daily?.likelyMistakes.filter(item => item.confidence === 'confirmed') || [];
@@ -42,7 +43,6 @@ const exportRecall = (report: CoachDailySummary | CoachWeeklySummary) => {
   const blob = new Blob([recallText(report)], { type: 'text/plain;charset=utf-8' }), url = URL.createObjectURL(blob), anchor = document.createElement('a');
   anchor.href = url; anchor.download = `${report.id}.txt`; anchor.click(); URL.revokeObjectURL(url);
 };
-const highlightedText = (text: string) => <HighlightedText text={text} />;
 
 export function CoachMode({ coach, speaking, playbackPending = false, playbackError = '', ieltsScore, initialStage = 'chat', onBack, onSettings, onIelts, onSecurity, onLogout, onHowItWorks, onStopSpeech, onSpeak }: Props) {
   const [draft, setDraft] = useState(''), [stage, setStage] = useState<Stage>(initialStage), [selectedSummary, setSelectedSummary] = useState<CoachDailySummary>();
@@ -50,9 +50,13 @@ export function CoachMode({ coach, speaking, playbackPending = false, playbackEr
   const view = useRef<HTMLDivElement>(null);
   const assessmentRequested = useRef(false);
   useEffect(() => { view.current?.scrollTo({ top: view.current.scrollHeight, behavior: 'smooth' }); }, [coach.history, coach.busy]);
+  const { setVoiceInterrupt, setVoicePlayback, stopRecording, conversationMode } = coach;
+  useEffect(() => { setVoiceInterrupt?.(onStopSpeech); return () => { setVoiceInterrupt?.(undefined); void stopRecording(false); }; }, [onStopSpeech, setVoiceInterrupt, stopRecording]);
+  useEffect(() => { setVoicePlayback?.(speaking); }, [speaking, setVoicePlayback]);
+  useEffect(() => { if (stage !== 'chat' && conversationMode) void stopRecording(false); }, [stage, conversationMode, stopRecording]);
   const submit = (event: SyntheticEvent<HTMLFormElement>) => { event.preventDefault(); const text = draft.trim(); if (!text) return; setDraft(''); void coach.sendText(text); };
   const startPractice = async () => { if (await coach.createPractice()) { setQuestion(0); setAnswer(''); setChecked(false); setScore(0); setStage('practice'); } };
-  const summarize = async () => { setStage('summarizing'); const report = await coach.summarizeToday(); if (report) { setSelectedSummary(report); setStage('summary'); } else setStage('chat'); };
+  const summarize = async () => { onStopSpeech(); if (coach.conversationMode) await coach.stopRecording(false); setStage('summarizing'); const report = await coach.summarizeToday(); if (report) { setSelectedSummary(report); setStage('summary'); } else setStage('recap-error'); };
   const pause = () => { onStopSpeech(); coach.cancel(); coach.setError(''); setStage('paused'); };
   const exercise = coach.practice?.exercises[question];
   const normalize = (value: string) => value.trim().toLocaleLowerCase().replace(/[.!?]+$/, '');
@@ -65,20 +69,23 @@ export function CoachMode({ coach, speaking, playbackPending = false, playbackEr
   return <main className="coach-page"><section className="coach-shell">
     <header className="coach-header"><Button variant="ghost" onClick={stage === 'chat' ? onBack : () => setStage('chat')} aria-label="Back"><ArrowLeft /></Button><div><strong>LUCKY</strong><span>English Coach</span></div><Button variant="ghost" onClick={() => setStage('dashboard')} aria-label="Personal learning dashboard"><UserRound /></Button></header>
     {stage === 'chat' && <>
-      <div className="coach-main"><CoachPet busy={coach.busy} speaking={speaking} recording={coach.recording} activity={coach.history.length}/><div className="coach-chat" ref={view} aria-live="polite">
-        {coach.history.map(message => <article key={message.id} className={`coach-message ${message.role}`}><span>{message.role === 'coach' ? 'Coach' : 'You'}</span><p>{message.role === 'coach' ? highlightedText(message.text) : message.text}</p>{message.role === 'coach' && <Button variant="ghost" className="coach-speak" onClick={() => onSpeak(message.text.replaceAll('**', ''))} aria-label="Read this reply"><Volume2 /></Button>}</article>)}
+      <div className="coach-main"><CoachPet busy={coach.busy} speaking={speaking} recording={coach.conversationMode ? coach.userSpeaking : coach.recording} activity={coach.history.length}/><div className="coach-chat" ref={view} aria-live="polite">
+        {coach.history.map((message, index) => <article key={message.id} className={`coach-message ${message.role}`}><span>{message.role === 'coach' ? 'Coach' : 'You'}</span><p>{<CorrectedText text={message.text} learner={message.role === 'learner'} correction={message.role === 'coach' ? message.correction : coach.history[index + 1]?.role === 'coach' ? coach.history[index + 1].correction : undefined} />}</p>{message.role === 'coach' && <Button variant="ghost" className="coach-speak" onClick={() => onSpeak(message.text.replaceAll('**', ''))} aria-label="Read this reply"><Volume2 /></Button>}</article>)}
         {coach.busy && <div className="coach-thinking"><LoaderCircle className="spinning" /> Thinking…</div>}
       </div></div>
       {coach.tip && <p className="coach-tip"><strong>Quick tip</strong> {coach.tip}</p>}{coach.error && <p className="coach-error" role="alert">{coach.error}</p>}
       {playbackError && <p className="coach-error" role="alert">{playbackError}</p>}
       {(playbackPending || speaking) && <div className="coach-audio-status"><span role="status">{playbackPending ? 'Preparing voice…' : 'Playing'}</span><Button variant="ghost" onClick={onStopSpeech}>{playbackPending ? 'Cancel audio' : 'Stop audio'}</Button></div>}
       <form className="coach-compose" onSubmit={submit}><Input value={draft} onChange={event => setDraft(event.target.value)} placeholder="Say something in English…" maxLength={2000} disabled={coach.busy || coach.recording} aria-label="Your English reply"/><Button type="submit" variant="secondary" disabled={!draft.trim() || coach.busy || coach.recording} aria-label="Send"><Send /></Button></form>
-      <Button variant="ghost" className="coach-summary-button" disabled={coach.busy || coach.recording || coach.history.length < 2} onClick={() => void summarize()}>Review this conversation</Button>
+      <Button variant="ghost" className="coach-summary-button" disabled={coach.busy || (coach.recording && !coach.conversationMode) || coach.history.length < 2} onClick={() => void summarize()}>Summarize this conversation</Button>
       {coach.recordingNotice && <p className="recording-notice" role="status">{coach.recordingNotice}</p>}
-      <div className="coach-actions"><RecordButton recording={coach.recording} busy={coach.busy} disabled={!coach.ready} elapsedSeconds={coach.recordingSeconds} limitSeconds={coach.recordingLimit} warningSeconds={coach.recordingWarning} onCancelChange={coach.setRecordingCancelled} onStart={() => { onStopSpeech(); return coach.startRecording(); }} onStop={coach.stopRecording}/><Button variant="outline" className="coach-end" disabled={!coach.ready || coach.busy} onClick={pause}>That’s enough for now</Button></div>
-      <p className="coach-record-hint">Hold to speak, release to send, slide up to cancel · Tap for hands-free recording</p>
+      {coach.conversationMode && <output className="conversation-status"><strong>{coach.userSpeaking ? 'Listening to you…' : speaking ? 'Lucky is speaking · Speak to interrupt' : coach.busy || playbackPending ? 'Preparing a reply · You can interrupt' : 'Listening · Speak whenever you’re ready'}</strong><small>Pause to send. Background noise is reduced; nearby voices may still be heard.</small></output>}
+      <div className="coach-actions">{coach.conversationMode ? <Button className="coach-mic" onClick={() => void coach.stopRecording(false)}>End voice conversation</Button> : <RecordButton onConversation={() => void coach.startConversation()} recording={coach.recording} busy={coach.busy} disabled={!coach.ready} elapsedSeconds={coach.recordingSeconds} limitSeconds={coach.recordingLimit} warningSeconds={coach.recordingWarning} onCancelChange={coach.setRecordingCancelled} onStart={() => { onStopSpeech(); return coach.startRecording(); }} onStop={coach.stopRecording}/>}<Button variant="outline" className="coach-end" disabled={!coach.ready} onClick={pause}>That’s enough for now</Button></div>
+      {!coach.conversationMode && <Button variant="ghost" className="voice-mode-start" disabled={!coach.ready || coach.busy || coach.recording} onClick={() => void coach.startConversation()}>Start voice conversation</Button>}
+      <p className="coach-record-hint">Hold to speak · Slide up to cancel · Double-tap for voice conversation</p>
     </>}
-    {stage === 'paused' && <section className="coach-offer"><h1>That’s enough for now</h1><p>Come back whenever you like. We can pick up where we left off.</p><Button onClick={() => setStage('chat')}>Continue chatting</Button><Button variant="outline" disabled={coach.history.length < 2} onClick={() => void summarize()}>Review this conversation</Button><Button variant="ghost" onClick={onBack}>Back to home</Button></section>}
+    {stage === 'paused' && <section className="coach-offer"><h1>That’s enough for now</h1><p>Come back whenever you like. We can pick up where we left off.</p><Button onClick={() => setStage('chat')}>Continue chatting</Button><Button variant="outline" disabled={coach.history.length < 2} onClick={() => void summarize()}>Summarize this conversation</Button><Button variant="ghost" onClick={onBack}>Back to home</Button></section>}
+    {stage === 'recap-error' && <section className="coach-offer"><h1>Your recap is not ready yet</h1><p role="alert">{coach.error || 'Your conversation is saved. Please try again.'}</p><Button onClick={() => void summarize()}>Retry recap</Button>{latestToday && <Button variant="outline" onClick={() => { setSelectedSummary(latestToday); setStage('summary'); }}>Open saved recap</Button>}<Button variant="ghost" onClick={() => setStage('chat')}>Back to conversation</Button></section>}
     {stage === 'summarizing' && <section className="coach-offer"><LoaderCircle className="summary-spinner spinning"/><h1>Preparing your recap…</h1><p>Lucky is finding your key vocabulary, grammar and next focus.</p></section>}
     {stage === 'summary' && selectedSummary && <section className="coach-summary"><header><div><small>DAILY RECALL · {selectedSummary.date}</small><h1><Sparkles/>Your conversation, in focus</h1><span>{selectedSummary.minutes} min</span></div><Button variant="ghost" onClick={() => exportRecall(selectedSummary)} aria-label="Export today’s recall"><Download/>Export</Button></header><RecallTables report={selectedSummary}/><div className="summary-actions"><Button onClick={() => void startPractice()} disabled={coach.busy}>{coach.busy ? <LoaderCircle className="spinning"/> : 'Practise this conversation'}</Button><Button variant="outline" onClick={() => { coach.clearSession(); setStage('chat'); void coach.beginSession(); }}>New conversation</Button></div></section>}
     {stage === 'dashboard' && <section className="coach-dashboard"><header><div><small>PERSONAL CENTER</small><h1>Your learning</h1></div><Button variant="ghost" onClick={onSettings}><Settings2/>Settings</Button></header>

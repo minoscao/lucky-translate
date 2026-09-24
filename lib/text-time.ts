@@ -30,18 +30,28 @@ export function parseCoachContent(content: string): Record<string, unknown> {
 
 export function coachTimeBasis(messages: Array<{ role: string; content: string }>, response: Record<string, unknown>) {
   const system = messages[0]?.content || '', task = messages.at(-1)?.content || '';
-  if (typeof response.reply === 'string') {
+  const daily = system.includes('daily English learning recalls') && !system.includes('weekly learning record');
+  const weekly = system.includes('weekly learning record');
+  if (daily || weekly) {
+    const strings = (value: unknown) => Array.isArray(value) && value.every(item => typeof item === 'string');
+    const rows = (value: unknown, keys: string[]) => Array.isArray(value) && value.every(item => item && typeof item === 'object' && keys.every(key => typeof item[key] === 'string'));
+    if (typeof response.overview !== 'string' || !response.overview.trim()
+      || !rows(response.vocabulary, ['word', 'definition']) || !rows(response.grammar, ['point', 'example'])
+      || (daily && (!strings(response.mainFocus) || !rows(response.likelyMistakes, ['original', 'better', 'reason', 'confidence'])))
+      || (weekly && (!strings(response.progress) || !strings(response.nextFocus)))) throw new Error('recap_fields_incomplete');
+  }
+  if (!daily && !weekly && typeof response.reply === 'string') {
     if (!response.reply.trim()) throw new Error('对话回复不完整');
     const previous = messages.slice(1, -1).filter(message => message.role === 'user');
     return { category: 'training' as const, texts: [previous.at(-1)?.content || '', response.reply], label: '英语对话' };
   }
-  if (system.includes('daily English learning recalls')) {
+  if (daily) {
     if (typeof response.overview !== 'string' || !Array.isArray(response.vocabulary) || !Array.isArray(response.grammar)) throw new Error('总结内容不完整');
     const transcript = task.split('\nConversation:\n').at(-1) || '';
     if (transcript === task) throw new Error('没有找到总结对应的对话');
     return { category: 'summary' as const, texts: [transcript.replace(/^(?:Coach|Learner):\s*/gm, '')], label: '对话总结' };
   }
-  if (system.includes('weekly learning record')) {
+  if (weekly) {
     if (typeof response.overview !== 'string' || !Array.isArray(response.vocabulary)) throw new Error('周总结内容不完整');
     // Automatic consolidation of already charged daily recaps does not charge the conversation again.
     return { category: 'summary' as const, texts: [], label: '周汇总（已计入每日总结）' };

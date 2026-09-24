@@ -17,7 +17,7 @@ const recordUrl = url(imports + strip(compile(await read('../components/record-b
 const { RecordButton } = await import(recordUrl);
 const textUrl = url(compile(await read('../lib/text-highlights.ts')));
 const highlightUrl = url(imports + `import {textHighlights} from '${textUrl}';` + strip(compile(await read('../components/highlighted-text.tsx'))));
-const { CoachMode } = await import(url(imports + `import {RecordButton} from '${recordUrl}';import {HighlightedText} from '${highlightUrl}';import {grammarHighlights} from '${textUrl}';const CoachPet=()=>null;` + strip(compile(await read('../components/coach-mode.tsx')))));
+const { CoachMode } = await import(url(imports + `import {RecordButton} from '${recordUrl}';import {HighlightedText} from '${highlightUrl}';import {grammarHighlights} from '${textUrl}';const CorrectedText=({text})=>text;const CoachPet=()=>null;` + strip(compile(await read('../components/coach-mode.tsx')))));
 const event = (y = 200, id = 1) => ({ pointerId: id, clientY: y, button: 0, isPrimary: true, preventDefault() {}, currentTarget: { setPointerCapture() {} } });
 
 test('recording displays elapsed time and turns red for each of the final ten seconds', async () => {
@@ -158,4 +158,36 @@ class VoiceRecorder {start(){return new Promise(resolve=>{globalThis.__grantReco
     if (renderer) await act(async () => renderer.unmount());
     delete globalThis.__recordingStops; delete globalThis.__grantRecording;
   }
+});
+
+test('double-tapping the mic enters conversation without sending the first short recording',async()=>{
+ globalThis.IS_REACT_ACT_ENVIRONMENT=true;let renderer,starts=0,conversations=0;const stops=[];let props={recording:false,onStart:async()=>{starts++;return true;},onStop:async commit=>stops.push(commit),onConversation:()=>conversations++};
+ try{await act(async()=>{renderer=create(React.createElement(RecordButton,props));});const button=()=>renderer.root.findByProps({className:'coach-mic'});await act(async()=>button().props.onPointerDown(event()));await act(async()=>button().props.onPointerUp(event()));await act(async()=>renderer.update(React.createElement(RecordButton,{...props,recording:true})));await act(async()=>button().props.onPointerDown(event(200,2)));await act(async()=>button().props.onPointerUp(event(200,2)));assert.equal(starts,1);assert.equal(conversations,1);assert.deepEqual(stops,[]);}
+ finally{if(renderer)await act(async()=>renderer.unmount());}
+});
+
+test('failed recap stays on a retry screen and provides the previously saved recap',async()=>{
+ globalThis.IS_REACT_ACT_ENVIRONMENT=true;let renderer;const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+ const coach={ready:true,history:[{id:1,role:'learner',text:'Hi'},{id:2,role:'coach',text:'Hello'}],dailySummaries:[{date}],weeklySummaries:[],stopRecording:async()=>{},summarizeToday:async()=>undefined,error:'Recap unavailable'};
+ try{await act(async()=>{renderer=create(React.createElement(CoachMode,{coach,speaking:false,onStopSpeech(){}}));});await act(async()=>renderer.root.findByProps({className:'coach-summary-button'}).props.onClick());const text=JSON.stringify(renderer.toJSON());assert.match(text,/Retry recap/);assert.match(text,/Open saved recap/);assert.match(text,/Recap unavailable/);}
+ finally{if(renderer)await act(async()=>renderer.unmount());}
+});
+
+test('speech onset cancels pending reply, prevents its late playback and leaves the microphone open',async()=>{
+ globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+ const {useCoach}=await import(url(imports+`
+ const EMPTY_COACH_MEMORY={level:'discovering',topics:[],strengths:[],focus:[],phrases:[]};const validCorrection=()=>undefined;
+ const coachReplyDirect=input=>globalThis.__voiceReply(input);
+ class VoiceRecorder {constructor(callbacks){globalThis.__voiceCallbacks=callbacks;}async start(){return true;}async stop(commit){globalThis.__voiceStops.push(commit);}}
+ `+strip(compile(await read('../hooks/use-coach.ts')))));
+ let current,renderer,resolveReply,preview,pending,signal,interrupts=0;globalThis.__voiceStops=[];
+ globalThis.__voiceReply=input=>{preview=input.onReply;signal=input.signal;return new Promise(resolve=>{resolveReply=resolve;});};
+ const scope={owner:'voice-test',active:true,storage:{getItem:()=>null,setItem(){}},save:async()=>{},request:async()=>({records:[],account:{usage:{todayTrainingSeconds:0,totalTrainingSeconds:0}}})};
+ function Harness(){current=useCoach(scope,()=>{});return null;}
+ try{await act(async()=>{renderer=create(React.createElement(Harness));});await act(async()=>{await current.startConversation();});current.setVoiceInterrupt(()=>interrupts++);
+ await act(async()=>{pending=current.beginSession();});await act(async()=>preview('I am speaking.'));assert.ok(current.speechRequest);
+ const stops=globalThis.__voiceStops.length;await act(async()=>globalThis.__voiceCallbacks.onSpeechStart());assert.equal(signal.aborted,true);assert.equal(current.speechRequest,undefined);assert.equal(current.busy,false);assert.equal(current.userSpeaking,true);assert.equal(current.conversationMode,true);assert.equal(interrupts,1);assert.equal(globalThis.__voiceStops.length,stops);
+ await act(async()=>{preview('Late response');resolveReply({data:{reply:'Late response'},usage:{tokens:1,cost:0}});await pending;});assert.equal(current.speechRequest,undefined);assert.equal(current.history.at(-1).text,'I am speaking.');
+ await act(async()=>{await current.stopRecording(false);});assert.equal(current.conversationMode,false);assert.equal(current.recording,false);
+ }finally{if(renderer)await act(async()=>renderer.unmount());delete globalThis.__voiceReply;delete globalThis.__voiceCallbacks;delete globalThis.__voiceStops;}
 });

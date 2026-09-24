@@ -1,6 +1,7 @@
+import type { CoachCorrection } from './coach-corrections';
 import { readEventStream } from './event-stream';
 export type CoachRole = 'learner' | 'coach';
-export type CoachMessage = { id: number; role: CoachRole; text: string; createdAt?: number };
+export type CoachMessage = { id: number; role: CoachRole; text: string; createdAt?: number; correction?: CoachCorrection };
 export type CoachMemory = { level: string; topics: string[]; strengths: string[]; focus: string[]; phrases: string[] };
 export type CoachExercise = {
   type: 'cloze' | 'meaning' | 'grammar'; prompt: string; answer: string;
@@ -28,10 +29,13 @@ export const COACH_RESPONSE_CONTRACT = `## 10. 返回格式 / Response format
 
 Return one JSON object only. Use these exact top-level keys and value types:
 
-{"reply":"Your spoken response to the learner","tip":"A short optional tip, or an empty string","memory":{"level":"discovering","topics":[],"strengths":[],"focus":[],"phrases":[]}}
+{"reply":"Your spoken response to the learner","tip":"A short optional tip, or an empty string","memory":{"level":"discovering","topics":[],"strengths":[],"focus":[],"phrases":[]},"correction":null}
 
 - The reply must be a nonempty string, never an object or an array.
-- Put the actual conversation response in reply.
+- These response-format and correction-first rules override older conflicting wording in this skill.
+- Put the actual conversation response in reply, as the first JSON field.
+- If there is a clear grammar or meaning problem, FIRST gently confirm the corrected phrase, for example: Oh, you mean **he walks**? Then continue the conversation naturally. Correct one useful issue; do not invent errors or treat uncertain transcription as confirmed evidence.
+- Return correction as null when no correction is needed, otherwise {"original":"he walk","corrected":"he walks"}. original must be an exact short substring of the latest learner turn. corrected must appear verbatim inside the bold phrase in reply. Preserve meaning; no HTML, color tags, or invented original words. The interface retains the original, marks its error red and only changed characters green in the bold corrected phrase.
 - Update memory only from supported learner evidence; empty arrays are valid.
 - Do not return the schema itself.
 - Do not use Markdown fences or add text outside the JSON object.`;
@@ -45,7 +49,7 @@ export const DEFAULT_COACH_SKILL = `# Lucky — English Coach Skill
 - Practice is in English only.
 - Follow the learner's real topic and latest clear intent.
 - This is a natural conversation, never a quiz, test, or grammar lecture.
-- Respond to the meaning first and leave most of the speaking opportunity to the learner.
+- When a clear correction is needed, confirm it first, then respond to the meaning and leave most of the speaking opportunity to the learner.
 
 ## 2. 判断学习者水平 / Learner level
 
@@ -114,7 +118,7 @@ async function coachRequest<T>(_key: string, messages: Array<{ role: 'system' | 
   try {
     response = await fetch('/api/coach', {
       method: 'POST', credentials: 'same-origin', signal, headers: { 'Content-Type': 'application/json', 'X-Lucky-Account': _key },
-      body: JSON.stringify({ messages: messages.map((message, index) => index === 0 ? { ...message, content: `${message.content}\n\nRequired JSON response schema: ${JSON.stringify(_schema)}` } : message), maxTokens: 1800, stream: Boolean(onReply) }),
+      body: JSON.stringify({ messages: messages.map((message, index) => index === 0 ? { ...message, content: `${message.content}\n\nRequired JSON response schema: ${JSON.stringify(_schema)}` } : message), maxTokens: _schemaName.includes('recall') ? 3000 : 1800, stream: Boolean(onReply) }),
     });
   } catch { throw new Error('Could not connect to English Coach. Please check your connection.'); }
   if (!response.ok) {
@@ -142,15 +146,15 @@ async function coachRequest<T>(_key: string, messages: Array<{ role: 'system' | 
 
 export async function coachReplyDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; turnStatus: string; newSession?: boolean; signal: AbortSignal; onReply?: (reply: string) => void }) {
   const schema = {
-    type: 'object', additionalProperties: false, required: ['reply', 'tip', 'memory'],
-    properties: { reply: { type: 'string' }, tip: { type: 'string' }, memory: memorySchema },
+    type: 'object', additionalProperties: false, required: ['reply', 'tip', 'memory', 'correction'],
+    properties: { reply: { type: 'string' }, tip: { type: 'string' }, memory: memorySchema, correction: { anyOf: [{ type: 'null' }, { type: 'object', required: ['original', 'corrected'], properties: { original: { type: 'string' }, corrected: { type: 'string' } } }] } },
   };
   const recent = input.history.slice(-12);
   const history = recent.map((message, index) => ({ role: message.role === 'coach' ? 'assistant' as const : 'user' as const, content: message.role === 'coach' ? JSON.stringify({ reply: message.text.slice(0, 1000) }) : index === recent.length - 1 ? message.text : message.text.slice(0, 1000) }));
   const task = input.newSession
     ? `Start a fresh ordinary open conversation. Do not announce a level or lesson. Learner memory: ${JSON.stringify(input.memory)}`
     : `Private learner memory: ${JSON.stringify(input.memory)}\nLearner-turn signal: ${input.turnStatus}. Respond to the learner's latest message.`;
-  return coachRequest<{ reply: string; tip: string; memory: CoachMemory }>(input.key, [{ role: 'system', content: DEFAULT_COACH_SKILL }, ...history, { role: 'user', content: task }], 'lucky_coach_turn', schema, input.signal, input.onReply);
+  return coachRequest<{ reply: string; tip: string; memory: CoachMemory; correction?: CoachCorrection }>(input.key, [{ role: 'system', content: DEFAULT_COACH_SKILL }, ...history, { role: 'user', content: task }], 'lucky_coach_turn', schema, input.signal, input.onReply);
 }
 
 export async function coachPracticeDirect(input: { key: string; history: CoachMessage[]; memory: CoachMemory; signal: AbortSignal }) {
@@ -196,7 +200,7 @@ export async function coachDailySummaryDirect(input: { key: string; history: Coa
     },
   };
   const transcript = input.history.map(message => `${message.role === 'coach' ? 'Coach' : 'Learner'}: ${message.text}`).join('\n').slice(-14000);
-  const prompt = `Create or update today's English learning recall from the conversation below. Write all learning content in clear, encouraging English for the learner to read. Be specific, constructive, and concise.
+  const prompt = `Create or update today's English learning recall from the conversation below. Write all learning content in clear, encouraging English for the learner to read. Be specific, constructive, and concise. Keep the overview under 70 words and each definition or explanation under 25 words.
 Focus first on what the learner practised, useful next steps, and language worth carrying forward. Include only vocabulary and grammar grounded in this conversation. Vocabulary rows must contain an English word or short phrase and an English definition. Grammar rows must contain a named grammar point and one natural English example. In each grammar row, highlights must contain 1–4 short exact substrings of the example that demonstrate the named pattern, such as the verb form, frequency adverb, or required preposition. Highlight only what the learner should notice, never the whole sentence. The named grammar point must actually occur in its example: a noun after "listen to" is not a gerund. Add highlights to any retained older rows as well.
 The transcript may contain speech-recognition noise, omitted words, false starts, or self-corrections. Treat a self-reported IELTS score or level in learner memory as meaningful context: for IELTS 7 or 8, assume isolated awkward wording is a recording artefact unless the transcript gives strong contrary evidence. Across every level, only add likelyMistakes for a confirmed language issue: it must either recur in independently clear learner turns or be unambiguously wrong in context and impossible to explain as transcription noise. Do not make a correction from one short phrase, a word-order glitch, a missing word, punctuation, a homophone, or a phrase that could have been self-corrected in speech. If uncertain, omit it completely. Never label a possible recording artefact as a learner mistake. Empty arrays are expected when evidence is insufficient.
 For every included likelyMistakes item, set confidence to "confirmed". Re-evaluate the existing recall under these stricter evidence rules and remove any earlier correction that is not confirmed. Use warm learner-facing labels in the content: describe a correction as one thing to refine, never as a failure or weakness. Never invent a mistake.

@@ -34,7 +34,7 @@ test('one coach turn counts only the latest learner message and visible reply', 
 
 test('summary uses transcript content at ten percent, excluding labels and instructions', () => {
   const messages = [{ role: 'system', content: 'You make evidence-based daily English learning recalls.' }, { role: 'user', content: 'Private instructions and memory\nConversation:\nLearner: ' + 'word '.repeat(75) + '\nCoach: ' + 'word '.repeat(75) }];
-  const basis = coachTimeBasis(messages, { overview: 'Summary', vocabulary: [], grammar: [] });
+  const basis = coachTimeBasis(messages, { overview: 'Summary', mainFocus: [], likelyMistakes: [], vocabulary: [], grammar: [] });
   const charge = estimateTextTime(basis.texts, rates, basis.category);
   assert.equal(charge.words, 150); assert.equal(charge.chargedSeconds, 6);
 });
@@ -101,4 +101,13 @@ test('ledger and daily total commit once, with rate snapshots preserved after a 
     const credit = sqlite.prepare("SELECT price_snapshot FROM usage_events WHERE model='legacy-time-refund'").get();
     assert.equal(JSON.parse(credit.price_snapshot).chargedSeconds,-4904);
   } finally { sqlite.close(); delete globalThis.__timeTestDb; }
+});
+
+
+test('a recap cannot masquerade as a chat reply or omit fields needed by its screen', () => {
+ const messages = [{role:'system',content:'You make evidence-based daily English learning recalls.'},{role:'user',content:'Conversation:\nLearner: I work here.'}];
+ assert.throws(()=>coachTimeBasis(messages,{reply:'Hello!'}),/recap_fields_incomplete/);
+ assert.throws(()=>coachTimeBasis(messages,{overview:'Summary',vocabulary:[],grammar:[]}),/recap_fields_incomplete/);
+ const weekly=[{role:'system',content:'You consolidate daily English learning recalls into a concise weekly learning record.'}];
+ assert.equal(coachTimeBasis(weekly,{overview:'Summary',progress:[],nextFocus:[],vocabulary:[],grammar:[]}).texts.length,0);
 });
