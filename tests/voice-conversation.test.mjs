@@ -22,3 +22,17 @@ test('translator retains its five-second pause instead of Coach automatic turn-t
 const url=code=>'data:text/javascript;base64,'+Buffer.from(ts.transpile(code,{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022})).toString('base64');
 const {correctionDiff,validCorrection}=await import(url(await fs.readFile(new URL('../lib/coach-corrections.ts',import.meta.url),'utf8')));
 test('missing s colors only the addition green and retains the original walk in red',()=>{const result=correctionDiff('he walk','he walks');assert.deepEqual([...result.added],[7]);assert.equal([...result.removed].map(i=>'he walk'[i]).join(''),'walk');assert.deepEqual(validCorrection({original:'he walk',corrected:'he walks'},'I think he walk to work.','Oh, you mean **he walks**?'),{original:'he walk',corrected:'he walks'});assert.equal(validCorrection({original:'she walk',corrected:'she walks'},'he walk','she walks'),undefined);});
+
+test('minimal verb correction preserves the whole bold phrase and colors only the missing suffix',async()=>{
+ const React=await import('react');const {renderToStaticMarkup}=await import('react-dom/server');
+ const helpers=url(await fs.readFile(new URL('../lib/coach-corrections.ts',import.meta.url),'utf8'));
+ const highlights=url(await fs.readFile(new URL('../lib/text-highlights.ts',import.meta.url),'utf8'));
+ const component=(await fs.readFile(new URL('../components/corrected-text.tsx',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
+ const code=`import React from '${import.meta.resolve('react')}';import {correctionDiff} from '${helpers}';import {textHighlights} from '${highlights}';const HighlightedText=({text})=>text;`+ts.transpile(component,{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.React});
+ const {CorrectedText}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+ const correction={original:'walk',corrected:'walks'};
+ const reply=renderToStaticMarkup(React.createElement(CorrectedText,{text:'Oh, you mean **he walks**?',correction}));
+ assert.match(reply,/<strong>he walk<mark class="correction-fixed">s<\/mark><\/strong>/);
+ const learner=renderToStaticMarkup(React.createElement(CorrectedText,{text:'My brother walk to work.',learner:true,correction}));
+ assert.match(learner,/My brother /);assert.equal((learner.match(/correction-original/g)||[]).length,4);
+});

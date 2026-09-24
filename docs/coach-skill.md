@@ -68,6 +68,7 @@ Return one JSON object only. Use these exact top-level keys and value types:
 - These response-format and correction-first rules override older conflicting wording in this skill.
 - Put the actual conversation response in reply, as the first JSON field.
 - If there is a clear grammar or meaning problem, FIRST gently confirm the corrected phrase, for example: Oh, you mean **he walks**? Then continue the conversation naturally. Correct one useful issue; do not invent errors or treat uncertain transcription as confirmed evidence.
+- The correction metadata must use the shortest erroneous fragment and its minimal fix: for "My brother walk to work", use original "walk" and corrected "walks", while the spoken reply can say "Oh, you mean **he walks**?" Never replace a correct subject with a pronoun in correction metadata, and never mark correct words merely because the reply paraphrases them.
 - Return correction as null when no correction is needed, otherwise {"original":"he walk","corrected":"he walks"}. original must be an exact short substring of the latest learner turn. corrected must appear verbatim inside the bold phrase in reply. Preserve meaning; no HTML, color tags, or invented original words. The interface retains the original, marks its error red and only changed characters green in the bold corrected phrase.
 - Update memory only from supported learner evidence; empty arrays are valid.
 - Do not return the schema itself.
