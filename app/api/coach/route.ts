@@ -6,6 +6,7 @@ import { coachTimeBasis, parseCoachContent } from '@/lib/text-time';
 import { chargeTextTime } from '@/lib/server/text-time';
 import { assertCoachEnglish, COACH_LANGUAGE_POLICY } from '@/lib/coach-language';
 import { completedReply } from '@/lib/event-stream';
+import { coachServiceError } from '@/lib/server/coach-error';
 
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return json({ error: 'Please open English Coach to continue.' }, 403);
@@ -55,8 +56,8 @@ export async function POST(request: Request) {
             const result = await response.json();
             send(response.ok ? { type: 'result', ...result as object } : { type: 'error', ...result as object });
           } catch (error) {
-            const status = (error as { status?: number }).status;
-            send({ type: 'error', error: status === 429 ? 'Your service limit has been reached or the service is busy. Please try again later.' : 'Lucky could not finish saving this reply. Please try again.' });
+            const failure = coachServiceError(error, true);
+            send({ type: 'error', error: failure.error, code: failure.code });
           } finally { if (!signal.aborted) controller.close(); }
         }, cancel() { abort.abort(); },
       });
@@ -64,7 +65,7 @@ export async function POST(request: Request) {
     }
     return await complete(request.signal);
   } catch (error) {
-    const status = (error as { status?: number }).status || 500;
-    return json({ error: status === 429 ? 'Your service limit has been reached or the service is busy. Please try again later or contact the administrator.' : status === 401 || status === 409 ? 'Please sign in again to continue.' : 'Lucky could not finish this reply. Please try again. No fish were used.' }, status);
+    const failure = coachServiceError(error);
+    return json({ error: failure.error, code: failure.code }, failure.status);
   }
 }

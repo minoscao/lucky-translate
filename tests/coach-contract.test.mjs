@@ -11,7 +11,7 @@ const coachUrl = moduleUrl((await read('../lib/coach.ts')).replace("'./event-str
 const { coachReplyDirect, COACH_RESPONSE_CONTRACT, DEFAULT_COACH_SKILL } = await import(coachUrl);
 const configSource = (await read('../lib/server/config.ts')).replace(/^import .*;\r?\n/gm, '');
 const configUrl = moduleUrl(`import {COACH_LANGUAGE_POLICY} from '${languageUrl}'; import {COACH_RESPONSE_CONTRACT,DEFAULT_COACH_SKILL} from '${coachUrl}'; const getDb=()=>({prepare:()=>({first:async()=>globalThis.__contractSkill})});\n${configSource}`);
-const routeSource = (await read('../app/api/coach/route.ts')).replace(/^import .*;\r?\n/gm, '');
+const routeSource = (await read('../lib/server/coach-error.ts')) + (await read('../app/api/coach/route.ts')).replace(/^import .*;\r?\n/gm, '');
 const timeUrl = moduleUrl(await read('../lib/text-time.ts'));
 const routeUrl = moduleUrl(`import {COACH_LANGUAGE_POLICY,assertCoachEnglish} from '${languageUrl}'; import {getCoachSkill} from '${configUrl}'; import {coachTimeBasis,parseCoachContent} from '${timeUrl}';
 const sameOrigin=()=>true,requireAccount=async()=>({id:'contract-test'}),readJson=request=>request.json(),json=(body,status=200)=>Response.json(body,{status});

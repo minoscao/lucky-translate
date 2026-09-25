@@ -30,10 +30,10 @@ export async function accountSnapshot(account: Account) {
 
 export async function enforceLimits(account: Account) {
   const snapshot = await accountSnapshot(account);
-  if (snapshot.limits.dailyTokens > 0 && snapshot.usage.todayTokens >= snapshot.limits.dailyTokens) throw Object.assign(new Error(`今日 Token 用量 ${snapshot.usage.todayTokens.toLocaleString('en-US')} / ${snapshot.limits.dailyTokens.toLocaleString('en-US')}，已达到单独设置的服务上限；小鱼干 余额不受影响。请联系管理员调整额度或明天继续。`), { status: 429 });
-  if (snapshot.limits.monthlyTokens > 0 && snapshot.usage.monthTokens >= snapshot.limits.monthlyTokens) throw Object.assign(new Error(`本月 Token 用量 ${snapshot.usage.monthTokens.toLocaleString('en-US')} / ${snapshot.limits.monthlyTokens.toLocaleString('en-US')}，本月服务额度已用完。请联系管理员调整额度或下月继续。`), { status: 429 });
-  if (snapshot.limits.dailySeconds > 0 && snapshot.usage.todaySeconds >= snapshot.limits.dailySeconds) throw Object.assign(new Error('今天的使用时间已用完，明天可以继续使用'), { status: 429 });
-  if (snapshot.limits.monthlySeconds > 0 && snapshot.usage.monthSeconds >= snapshot.limits.monthlySeconds) throw Object.assign(new Error('本月的使用时间已用完，下月可以继续使用'), { status: 429 });
+  if (snapshot.limits.dailyTokens > 0 && snapshot.usage.todayTokens >= snapshot.limits.dailyTokens) throw Object.assign(new Error(`今日 Token 用量 ${snapshot.usage.todayTokens.toLocaleString('en-US')} / ${snapshot.limits.dailyTokens.toLocaleString('en-US')}，已达到单独设置的服务上限；小鱼干 余额不受影响。请联系管理员调整额度或明天继续。`), { status: 429, code: 'daily_token_limit' });
+  if (snapshot.limits.monthlyTokens > 0 && snapshot.usage.monthTokens >= snapshot.limits.monthlyTokens) throw Object.assign(new Error(`本月 Token 用量 ${snapshot.usage.monthTokens.toLocaleString('en-US')} / ${snapshot.limits.monthlyTokens.toLocaleString('en-US')}，本月服务额度已用完。请联系管理员调整额度或下月继续。`), { status: 429, code: 'monthly_token_limit' });
+  if (snapshot.limits.dailySeconds > 0 && snapshot.usage.todaySeconds >= snapshot.limits.dailySeconds) throw Object.assign(new Error('今天的使用时间已用完，明天可以继续使用'), { status: 429, code: 'daily_time_limit' });
+  if (snapshot.limits.monthlySeconds > 0 && snapshot.usage.monthSeconds >= snapshot.limits.monthlySeconds) throw Object.assign(new Error('本月的使用时间已用完，下月可以继续使用'), { status: 429, code: 'monthly_time_limit' });
   return snapshot;
 }
 

@@ -23,6 +23,7 @@
     "typeCheck": true
   },
   "ignorePatterns": [
+    "public/local-voice/**",
     ".next/**",
     ".vinext/**",
     "out/**",

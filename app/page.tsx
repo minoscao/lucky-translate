@@ -10,14 +10,16 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CoachMode } from '@/components/coach-mode';
+import { VoiceSetup } from '@/components/voice-setup';
+import { isVoicePackCached } from '@/lib/voice-pack';
+import { VoiceStatus } from '@/components/voice-status';
 import { INTERFACE_COPY } from '@/lib/interface-copy';
 import { useCoach } from '@/hooks/use-coach';
 import { useTranslator } from '@/hooks/use-translator';
 import { synthesizeSpeechDirect } from '@/lib/direct-api';
 import { playAudioSegments } from '@/lib/audio-playback';
 import { SpeechCache } from '@/lib/speech-cache';
-import { StreamingSpeechPlayer } from '@/lib/streaming-speech';
-import { SpeechFallback } from '@/lib/device-speech';
+import { LocalSpeech, type VoiceState } from '@/lib/local-speech';
 import { AudioOutputSettings } from '@/components/audio-output-settings';
 import { AudioRoute, DEFAULT_AUDIO_ROUTE, routeAudio, selectSink, speechSegments } from '@/lib/audio-routing';
 import { validEmail, validUsername, validVerificationCode } from '@/lib/auth-inputs';
@@ -257,10 +259,32 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
   const playedSpeech = useRef(0);
   const playedCoachSpeech = useRef(0);
   const speechRequest = useRef(0), speechAbort = useRef<AbortController | undefined>(undefined), speechAudio = useRef<HTMLAudioElement | undefined>(undefined), speechUrl = useRef('');
-  const streamedSpeech = useRef<StreamingSpeechPlayer | undefined>(undefined);
-  const [speechFallback] = useState(() => new SpeechFallback());
+  const localSpeech = useRef<LocalSpeech | undefined>(undefined);
+  const [voiceState, setVoiceState] = useState<VoiceState>({ state: 'idle', progress: 0 });
+  const [voiceSetupOpen, setVoiceSetupOpen] = useState(false);
   const { addUsage, setError: reportError } = t;
   const activeAccountId = account?.status === 'active' ? account.id : '';
+  useEffect(() => {
+    if (!activeAccountId) return;
+    let disposed = false;
+    const engine = new LocalSpeech(state => { if (!disposed) { setVoiceState(state); if (state.state === 'error') setVoiceSetupOpen(true); } }); localSpeech.current = engine;
+    void isVoicePackCached().then(cached => {
+      if (disposed) return;
+      if (cached) void engine.prepare().catch(() => {});
+      else setVoiceSetupOpen(true);
+    });
+    const unlock = () => { void engine.unlock().catch(() => {}); };
+    document.addEventListener('pointerup', unlock, true);
+    document.addEventListener('touchend', unlock, true);
+    document.addEventListener('keydown', unlock, true);
+    return () => {
+      disposed = true; speechAbort.current?.abort(); engine.dispose(); localSpeech.current = undefined;
+      document.removeEventListener('pointerup', unlock, true);
+      document.removeEventListener('touchend', unlock, true);
+      document.removeEventListener('keydown', unlock, true);
+    };
+  }, [activeAccountId]);
+  const retryVoice = () => { setVoiceSetupOpen(true); setSpeechError(''); void localSpeech.current?.unlock().catch(() => {}); void localSpeech.current?.prepare().catch(() => {}); };
   const coach = useCoach(scope, t.addUsage, ieltsScore);
   useEffect(() => {
     if (dialog !== 'usage' || !activeAccountId) return;
@@ -348,7 +372,6 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
   const editSentence = (side: 0 | 1, id: number, text: string) => { setEditingId(id); setDraftText(text); open('edit', side); };
   const stopSpeech = useCallback(() => {
     speechRequest.current++; speechAbort.current?.abort(); speechAbort.current = undefined;
-    streamedSpeech.current?.stop(); streamedSpeech.current = undefined;
     window.speechSynthesis?.cancel();
     const audio = speechAudio.current; speechAudio.current = undefined; if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
     if (speechUrl.current) URL.revokeObjectURL(speechUrl.current); speechUrl.current = ''; setSpeaking(false); setSpeechPreparing(false);
@@ -357,6 +380,14 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
     stopSpeech();
     const requestId = ++speechRequest.current, abort = new AbortController(); speechAbort.current = abort; setSpeaking(true); setSpeechPreparing(true); setSpeechError('');
     try {
+      if (appMode === 'coach') {
+        if (voiceState.state !== 'ready') { setVoiceSetupOpen(true); stopSpeech(); return; }
+        const engine = localSpeech.current;
+        if (!engine) throw new Error('Local voice is not ready. Please try again.');
+        await engine.play(speechSegments(text.replaceAll('**', '').trim()), abort.signal, speechSpeed, () => { if (requestId === speechRequest.current) setSpeechPreparing(false); });
+        if (requestId === speechRequest.current) stopSpeech();
+        return;
+      }
       if (lang.startsWith('zh') && 'speechSynthesis' in window && !(appMode === 'translator' && dualAudio)) {
         const speech = new SpeechSynthesisUtterance(text); speech.lang = lang; speech.rate = speechSpeed;
         const voices = window.speechSynthesis.getVoices(), voice = voices.find(item => item.lang.toLowerCase().startsWith(lang.toLowerCase())) || voices.find(item => item.lang.toLowerCase().startsWith('zh'));
@@ -367,21 +398,13 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
         window.speechSynthesis.speak(speech); return;
       }
       const route = appMode === 'translator' && dualAudio ? audioRoutes[lang] || DEFAULT_AUDIO_ROUTE : undefined;
-      const segments = appMode === 'coach' ? speechSegments(text.replaceAll('**', '').trim()) : [text];
+      const segments = [text];
       const resource = (segment: string) => speechCache.get(JSON.stringify([scope.owner, lang, segment]), async (signal, onChunk) => {
           const result = await synthesizeSpeechDirect({ accountId: scope.owner, text: segment, language: lang, speed: speechSpeed, signal, onChunk });
           if (scope.active && !signal.aborted) addUsage(result.usage.tokens, result.usage.cost);
           return result.audio;
         });
-      if (appMode === 'coach' && typeof AudioContext !== 'undefined') {
-        for (let index = 0; index < segments.length; index++) {
-          await speechFallback.play(segments[index], abort.signal, speechSpeed, async started => {
-            const player = new StreamingSpeechPlayer(abort.signal, speechSpeed); streamedSpeech.current = player;
-            try { await player.play(resource(segments[index]), () => { started(); if (index + 1 < segments.length) resource(segments[index + 1]); }); }
-            finally { player.stop(); if (streamedSpeech.current === player) streamedSpeech.current = undefined; }
-          }, () => { if (requestId === speechRequest.current) setSpeechPreparing(false); });
-        }
-      } else {
+      {
         const audio = new Audio(); speechAudio.current = audio;
         audio.onplaying = () => { if (requestId === speechRequest.current) setSpeechPreparing(false); };
         const prepare = async (segment: string) => { const source = await resource(segment).audio; return route ? routeAudio(source, route.channel) : source; };
@@ -394,7 +417,7 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
       const message = cause instanceof Error && cause.name === 'NotAllowedError' ? 'Tap the speaker button to allow audio playback.' : cause instanceof Error ? cause.message : 'Could not play the voice. Please try again.';
       if (appMode === 'coach') setSpeechError(message); else reportError(message);
     }
-  }, [addUsage, reportError, speechSpeed, stopSpeech, appMode, dualAudio, audioRoutes, scope, speechCache, speechFallback]);
+  }, [addUsage, reportError, speechSpeed, stopSpeech, appMode, dualAudio, audioRoutes, scope, speechCache, voiceState.state]);
   useEffect(() => {
     const request = t.autoSpeech;
     if (visibleDialog === 'audio' || appMode !== 'translator') { if (request) playedSpeech.current = request.id; return; }
@@ -406,8 +429,9 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
   useEffect(() => {
     const request = coach.speechRequest;
     if (appMode !== 'coach' || !request || request.id === playedCoachSpeech.current) return;
-    playedCoachSpeech.current = request.id; void playSpeech(request.text, 'en');
-  }, [appMode, coach.speechRequest, playSpeech]);
+    playedCoachSpeech.current = request.id;
+    if (voiceState.state === 'ready') void playSpeech(request.text, 'en');
+  }, [appMode, coach.speechRequest, playSpeech, voiceState.state]);
   useEffect(() => {
     const hidden = () => { if (document.hidden) stopSpeech(); };
     document.addEventListener('visibilitychange', hidden);
@@ -507,8 +531,9 @@ function AccountWorkspace({ initialAccount, onAccount, loadError }: { initialAcc
   </section></main>;
   if (account.status !== 'active') return <main className="access-page"><section className="access-card member-pending"><div className="access-mark"><ShieldCheck /></div><h1>{account.status === 'pending' ? '注册申请已提交' : account.status === 'expired' ? '会员已到期' : '账户已暂停'}</h1><p>{account.status === 'pending' ? '管理员激活会员后即可开始使用。' : '请联系管理员恢复账户。'}</p><strong>{account.email || account.username}</strong><Button className="form-submit" onClick={() => void accountRequest<{ account: AccountSnapshot | null }>('/api/auth').then(data => setAccount(data.account))}>刷新状态</Button><Button variant="ghost" onClick={() => void logout()}><LogOut />Log out</Button></section></main>;
   if (!t.ready || !coach.ready) return <main className="access-page"><section className="access-card"><LoaderCircle className="spinning" /><p>{t.error || coach.error || 'Loading your conversations…'}</p>{(t.error || coach.error) && <Button onClick={() => window.location.reload()}>Retry</Button>}</section></main>;
-  if (appMode === null) return <main className="mode-page"><section className="mode-card">{showOnboarding && <Onboarding onComplete={completeOnboarding}/>}<Image className="lucky-cat" src="/lucky-cat.webp" width={128} height={128} alt="Lucky cat" unoptimized /><p className="mode-brand">LUCKY</p><h1>What would you like to do?</h1><div className="member-summary"><span>{account.username} · {account.level.toUpperCase()}</span><strong title={`${balancePeriod} remaining`}><FishAmount seconds={remaining} label={balancePeriod} /></strong><small>Cloud storage {(account.storage.bytes / 1024 / 1024).toFixed(1)} / {(account.storage.limitBytes / 1024 / 1024).toFixed(0)} MB · Saved for {account.storage.retentionMonths} {account.storage.retentionMonths === 1 ? 'month' : 'months'}</small></div>{account.storage.warning && <button className="storage-warning" onClick={() => { setAppMode('translator'); queueMicrotask(() => open('history')); }}>Storage nearly full. Export your conversations.</button>}<div className="mode-options"><Button onClick={() => { setCoachEntryStage('chat'); setAppMode('coach'); if (coach.history.length === 0 && !coach.busy) void coach.beginSession(); }}><strong>English Coach</strong><span>Have a natural conversation and practise afterwards</span></Button><Button variant="outline" onClick={() => setAppMode('translator')}><strong>Translator</strong><span>Translate a live conversation in both directions</span></Button></div><div className="mode-account-actions"><Button variant="ghost" className="mode-settings" onClick={() => { setSettingsReturnMode(null); setAppMode('translator'); queueMicrotask(() => open('settings')); }}><Settings2 />Settings</Button><Button variant="ghost" className="mode-settings" onClick={() => void logout()}><LogOut />Log out</Button></div></section></main>;
-  if (appMode === 'coach') return <CoachMode onStopSpeech={stopSpeech} coach={coach} speaking={speaking && !speechPreparing} playbackPending={speechPreparing} playbackError={speechError} ieltsScore={ieltsScore} initialStage={coachEntryStage} onBack={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('chat'); setAppMode(null); }} onSettings={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('settings')); }} onIelts={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('ielts')); }} onSecurity={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('password')); }} onLogout={() => void logout()} onHowItWorks={() => { stopSpeech(); void coach.stopRecording(); setAppMode(null); queueMicrotask(() => setShowOnboarding(true)); }} onSpeak={text => void playSpeech(text, 'en')} />;
+  const voiceSetup = <VoiceSetup open={voiceSetupOpen && !showOnboarding} state={voiceState} onDownload={retryVoice} onClose={() => setVoiceSetupOpen(false)} />;
+  if (appMode === null) return <main className="mode-page"><section className="mode-card">{voiceSetup}{showOnboarding && <Onboarding onComplete={completeOnboarding}/>}<Image className="lucky-cat" src="/lucky-cat.webp" width={128} height={128} alt="Lucky cat" unoptimized /><p className="mode-brand">LUCKY</p><h1>What would you like to do?</h1><div className="member-summary"><span>{account.username} · {account.level.toUpperCase()}</span><strong title={`${balancePeriod} remaining`}><FishAmount seconds={remaining} label={balancePeriod} /></strong><small>Cloud storage {(account.storage.bytes / 1024 / 1024).toFixed(1)} / {(account.storage.limitBytes / 1024 / 1024).toFixed(0)} MB · Saved for {account.storage.retentionMonths} {account.storage.retentionMonths === 1 ? 'month' : 'months'}</small></div>{account.storage.warning && <button className="storage-warning" onClick={() => { setAppMode('translator'); queueMicrotask(() => open('history')); }}>Storage nearly full. Export your conversations.</button>}<VoiceStatus state={voiceState} onRetry={retryVoice} /><div className="mode-options"><Button onClick={() => { setCoachEntryStage('chat'); setAppMode('coach'); if (coach.history.length === 0 && !coach.busy) void coach.beginSession(); }}><strong>English Coach</strong><span>Have a natural conversation and practise afterwards</span></Button><Button variant="outline" onClick={() => setAppMode('translator')}><strong>Translator</strong><span>Translate a live conversation in both directions</span></Button></div><div className="mode-account-actions"><Button variant="ghost" className="mode-settings" onClick={() => { setSettingsReturnMode(null); setAppMode('translator'); queueMicrotask(() => open('settings')); }}><Settings2 />Settings</Button><Button variant="ghost" className="mode-settings" onClick={() => void logout()}><LogOut />Log out</Button></div></section></main>;
+  if (appMode === 'coach') return <>{voiceSetup}<CoachMode voiceState={voiceState} onRetryVoice={retryVoice} onStopSpeech={stopSpeech} coach={coach} speaking={speaking && !speechPreparing} playbackPending={speechPreparing} playbackError={speechError} ieltsScore={ieltsScore} initialStage={coachEntryStage} onBack={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('chat'); setAppMode(null); }} onSettings={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('settings')); }} onIelts={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('ielts')); }} onSecurity={() => { stopSpeech(); void coach.stopRecording(); setCoachEntryStage('dashboard'); setSettingsReturnMode('coach'); setAppMode('translator'); queueMicrotask(() => open('password')); }} onLogout={() => void logout()} onHowItWorks={() => { stopSpeech(); void coach.stopRecording(); setAppMode(null); queueMicrotask(() => setShowOnboarding(true)); }} onSpeak={text => void playSpeech(text, 'en')} /></>;
   return <main className="translator"><div className={`app-frame ${layoutMode === 'single-operator' ? 'single-operator' : ''}`}>
     {panelOrder.map((side, index) => <LanguagePanel key={side} controller={t} onHistory={() => open('history')} totals={{ ...t.usageTotals, dayCost: account.usage.todayCost, dayTokens: account.usage.todayTokens, monthCost: account.usage.monthCost, monthTokens: account.usage.monthTokens }} multiplier={account.costMultiplier} side={side} visualRow={layoutMode === 'single-operator' ? index + 1 : side === 0 ? 1 : 3} isSelf={side === selfSide} facingAway={layoutMode === 'face-to-face' && side === 0} showRecord={layoutMode === 'face-to-face'} ownName={ownName} pair={t.pair} entries={panelEntries[side]} locked={locked} canSpeak={true} onLanguage={pair => { stopSpeech(); t.changePair(pair); }} onEdit={(id, text) => editSentence(side, id, text)} onSpeak={text => void playSpeech(text, t.pair[side])} onBeforeRecord={stopSpeech} onUsage={() => open('usage', side)} />)}
     <section className={`control-deck ${layoutMode === 'single-operator' ? 'single-control-deck' : ''}`} aria-label="录音控制">

@@ -9,6 +9,7 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "build:cloudflare": "vinext build --mode cloudflare",
+    "voice:prepare": "node scripts/prepare-local-voice.mjs",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint",
     "format": "oxfmt",
@@ -16,6 +17,7 @@
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
+    "@diffusionstudio/piper-wasm": "1.0.0",
     "@shadcn/react": "0.3.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
@@ -26,6 +28,7 @@
     "input-otp": "1.4.2",
     "jose": "^6.2.12",
     "lucide-react": "1.31.0",
+    "onnxruntime-web": "1.30.0",
     "react": "19.2.6",
     "react-day-picker": "9.8.1",
     "react-dom": "19.2.6",

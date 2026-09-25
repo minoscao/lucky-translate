@@ -18,7 +18,7 @@ export async function deepSeekJson(account: Account, feature: string, messages: 
     });
     if (!response.ok) {
       if ([401, 403].includes(response.status)) throw Object.assign(new Error('DeepSeek 服务配置无效，请联系管理员'), { status: 503 });
-      if (response.status === 429) throw Object.assign(new Error('翻译服务请求较多，请稍后重试'), { status: 429 });
+      if (response.status === 429) throw Object.assign(new Error('翻译服务请求较多，请稍后重试'), { status: 429, code: 'provider_busy' });
       throw Object.assign(new Error('DeepSeek 暂时无法回应'), { status: 502 });
     }
     type Completion = { choices?: Array<{ finish_reason?: string; message?: { content?: string } }>; usage?: Parameters<typeof recordDeepSeekUsage>[2] };

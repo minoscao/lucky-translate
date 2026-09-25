@@ -11,9 +11,11 @@ import { CoachPet } from '@/components/coach-pet';
 import { HighlightedText } from '@/components/highlighted-text';
 import { CorrectedText } from '@/components/corrected-text';
 import { grammarHighlights } from '@/lib/text-highlights';
+import type { VoiceState } from '@/lib/local-speech';
+import { VoiceStatus } from '@/components/voice-status';
 
 type CoachController = ReturnType<typeof useCoach>;
-type Props = { coach: CoachController; speaking: boolean; playbackPending?: boolean; playbackError?: string; ieltsScore?: number; initialStage?: 'chat' | 'dashboard'; onBack: () => void; onSettings: () => void; onIelts: () => void; onSecurity: () => void; onLogout: () => void; onHowItWorks: () => void; onStopSpeech: () => void; onSpeak: (text: string) => void };
+type Props = { voiceState?: VoiceState; onRetryVoice?: () => void; coach: CoachController; speaking: boolean; playbackPending?: boolean; playbackError?: string; ieltsScore?: number; initialStage?: 'chat' | 'dashboard'; onBack: () => void; onSettings: () => void; onIelts: () => void; onSecurity: () => void; onLogout: () => void; onHowItWorks: () => void; onStopSpeech: () => void; onSpeak: (text: string) => void };
 type Stage = 'chat' | 'paused' | 'summarizing' | 'recap-error' | 'summary' | 'dashboard' | 'practice' | 'done';
 
 function RecallTables({ report }: { report: CoachDailySummary | CoachWeeklySummary }) {
@@ -44,7 +46,7 @@ const exportRecall = (report: CoachDailySummary | CoachWeeklySummary) => {
   anchor.href = url; anchor.download = `${report.id}.txt`; anchor.click(); URL.revokeObjectURL(url);
 };
 
-export function CoachMode({ coach, speaking, playbackPending = false, playbackError = '', ieltsScore, initialStage = 'chat', onBack, onSettings, onIelts, onSecurity, onLogout, onHowItWorks, onStopSpeech, onSpeak }: Props) {
+export function CoachMode({ voiceState, onRetryVoice, coach, speaking, playbackPending = false, playbackError = '', ieltsScore, initialStage = 'chat', onBack, onSettings, onIelts, onSecurity, onLogout, onHowItWorks, onStopSpeech, onSpeak }: Props) {
   const [draft, setDraft] = useState(''), [stage, setStage] = useState<Stage>(initialStage), [selectedSummary, setSelectedSummary] = useState<CoachDailySummary>();
   const [question, setQuestion] = useState(0), [answer, setAnswer] = useState(''), [checked, setChecked] = useState(false), [score, setScore] = useState(0);
   const view = useRef<HTMLDivElement>(null);
@@ -74,6 +76,7 @@ export function CoachMode({ coach, speaking, playbackPending = false, playbackEr
         {coach.busy && <div className="coach-thinking"><LoaderCircle className="spinning" /> Thinking…</div>}
       </div></div>
       {coach.tip && <p className="coach-tip"><strong>Quick tip</strong> {coach.tip}</p>}{coach.error && <p className="coach-error" role="alert">{coach.error}</p>}
+      <VoiceStatus state={voiceState} onRetry={onRetryVoice} />
       {playbackError && <p className="coach-error" role="alert">{playbackError}</p>}
       {(playbackPending || speaking) && <div className="coach-audio-status"><span role="status">{playbackPending ? 'Preparing voice…' : 'Playing'}</span><Button variant="ghost" onClick={onStopSpeech}>{playbackPending ? 'Cancel audio' : 'Stop audio'}</Button></div>}
       <form className="coach-compose" onSubmit={submit}><Input value={draft} onChange={event => setDraft(event.target.value)} placeholder="Say something in English…" maxLength={2000} disabled={coach.busy || coach.recording} aria-label="Your English reply"/><Button type="submit" variant="secondary" disabled={!draft.trim() || coach.busy || coach.recording} aria-label="Send"><Send /></Button></form>

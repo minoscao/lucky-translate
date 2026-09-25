@@ -41,7 +41,7 @@ test('summary uses transcript content at ten percent, excluding labels and instr
 
 test('coach endpoint charges validated content only; empty, malformed and failed replies never charge time', async () => {
   let route = await readFile(new URL('../app/api/coach/route.ts', import.meta.url), 'utf8');
-  route = route.replace(/^import .*;\r?\n/gm, '');
+  route = (await readFile(new URL('../lib/server/coach-error.ts', import.meta.url), 'utf8')) + route.replace(/^import .*;\r?\n/gm, '');
   globalThis.__coachBillingTest = { content: JSON.stringify({ reply: 'Hello friend', tip: '', memory: {} }), calls: [], fail: false };
   const languageJs = ts.transpile(await readFile(new URL('../lib/coach-language.ts', import.meta.url), 'utf8'), { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext });
   const languageUrl = 'data:text/javascript;base64,' + Buffer.from(languageJs).toString('base64');

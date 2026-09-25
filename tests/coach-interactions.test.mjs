@@ -17,7 +17,8 @@ const recordUrl = url(imports + strip(compile(await read('../components/record-b
 const { RecordButton } = await import(recordUrl);
 const textUrl = url(compile(await read('../lib/text-highlights.ts')));
 const highlightUrl = url(imports + `import {textHighlights} from '${textUrl}';` + strip(compile(await read('../components/highlighted-text.tsx'))));
-const { CoachMode } = await import(url(imports + `import {RecordButton} from '${recordUrl}';import {HighlightedText} from '${highlightUrl}';import {grammarHighlights} from '${textUrl}';const CorrectedText=({text})=>text;const CoachPet=()=>null;` + strip(compile(await read('../components/coach-mode.tsx')))));
+const voiceStatusUrl = url(imports + strip(compile(await read('../components/voice-status.tsx'))));
+const { CoachMode } = await import(url(imports + `import {VoiceStatus} from '${voiceStatusUrl}';import {RecordButton} from '${recordUrl}';import {HighlightedText} from '${highlightUrl}';import {grammarHighlights} from '${textUrl}';const CorrectedText=({text})=>text;const CoachPet=()=>null;` + strip(compile(await read('../components/coach-mode.tsx')))));
 const event = (y = 200, id = 1) => ({ pointerId: id, clientY: y, button: 0, isPrimary: true, preventDefault() {}, currentTarget: { setPointerCapture() {} } });
 
 test('recording displays elapsed time and turns red for each of the final ten seconds', async () => {

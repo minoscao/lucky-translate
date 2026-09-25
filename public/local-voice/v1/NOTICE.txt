@@ -1,0 +1,22 @@
+LuckyCat local English voice pack v1
+
+Voice: Piper en_US-ljspeech-medium
+Source revision: c10ece1aade47bb51c153c893d14e5bf8e5b7117
+https://huggingface.co/rhasspy/piper-voices/tree/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/ljspeech/medium
+The model repository is MIT licensed; see MODEL_CARD for model and training details.
+The LJ Speech dataset is public domain: https://keithito.com/LJ-Speech-Dataset/
+
+Inference: ONNX Runtime Web 1.30.0 (MIT)
+https://github.com/microsoft/onnxruntime/tree/v1.30.0
+https://github.com/microsoft/onnxruntime/blob/v1.30.0/LICENSE
+
+Phonemizer: @diffusionstudio/piper-wasm 1.0.0 (MIT wrapper/build)
+https://github.com/diffusionstudio/piper-wasm
+Includes Piper phonemization and eSpeak NG voice data/code.
+Piper source: https://github.com/rhasspy/piper-phonemize
+eSpeak NG source and GPL-3.0 license: https://github.com/espeak-ng/espeak-ng
+WebAssembly source/build instructions: https://github.com/diffusionstudio/piper-wasm
+
+phonemizer.js is the package's generated loader with a default ESM export added.
+The ONNX model is split into 20 MiB static files and reassembled unchanged in memory.
+Runtime asset names and SHA-256 digests are recorded in manifest.json.

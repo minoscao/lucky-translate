@@ -1,0 +1,62 @@
+{
+  "revision": "c10ece1aade47bb51c153c893d14e5bf8e5b7117",
+  "voice": "en_US-ljspeech-medium",
+  "parts": [
+    "voice-0.bin",
+    "voice-1.bin",
+    "voice-2.bin",
+    "voice-3.bin"
+  ],
+  "assets": [
+    {
+      "name": "voice-0.bin",
+      "bytes": 20971520,
+      "sha256": "c56057177856e6a66810de78cfc4231b266b2dee52c1a93071037cb013a7d180"
+    },
+    {
+      "name": "voice-1.bin",
+      "bytes": 20971520,
+      "sha256": "af75920612a607857e2611661f2107eebcc616b3034ec8caa519b3e311d06165"
+    },
+    {
+      "name": "voice-2.bin",
+      "bytes": 20971520,
+      "sha256": "414593a563652e299a27e2fb99600bbecddf5b903c50d686f7e9060700111e28"
+    },
+    {
+      "name": "voice-3.bin",
+      "bytes": 616819,
+      "sha256": "b12e4c6242da632bd086b2a3043f2b1338a2f9af3d8acea5cf02b15739e91f50"
+    },
+    {
+      "name": "voice.json",
+      "bytes": 4972,
+      "sha256": "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860"
+    },
+    {
+      "name": "phonemizer.js",
+      "bytes": 120752,
+      "sha256": "e7a60b1651333fe4fe3d2a9738cd0ab11d6c963f3029744b9a106d0cde5c8b88"
+    },
+    {
+      "name": "piper_phonemize.wasm",
+      "bytes": 635212,
+      "sha256": "b777cd107a91d2bcc6a1ea46f2c26a662a7407394fe84589198aeaa83dd7a9d6"
+    },
+    {
+      "name": "piper_phonemize.data",
+      "bytes": 18077249,
+      "sha256": "29f1025eb23a5b5c192cd14a6efbce4509402ff265405072ee6f7d1a09b78f8c"
+    },
+    {
+      "name": "ort-wasm-simd-threaded.wasm",
+      "bytes": 14239897,
+      "sha256": "3398c10d07d229bd91b364548e130e0e51a8e5704b88c7c083ebbeb78842dee2"
+    },
+    {
+      "name": "ort-wasm-simd-threaded.mjs",
+      "bytes": 24381,
+      "sha256": "e13f7f94fc51b4ca72b12faeb1ee95f4ace6dfbc8939bc718aabdc0a27c4299b"
+    }
+  ]
+}
